@@ -1,0 +1,82 @@
+// 1. Database Configuration
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 2. User Roles Enum
+enum Role {
+  ADMIN
+  TEAM_MEMBER
+  CLIENT
+}
+
+// 3. User Table
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String
+  name      String
+  role      Role      @default(CLIENT)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relationship: One user can create many projects
+  projects  Project[]
+}
+
+// 4. Project Table
+model Project {
+  id               String        @id @default(uuid())
+  title            String
+  description      String?
+  projectType      String        // e.g., "Commercial", "Residential", "Bridge"
+  location         String        // e.g., "Dubai", "London"
+  isArchived       Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  // Foreign Key to User (Who created this project)
+  createdByUserId  String
+  createdBy        User          @relation(fields: [createdByUserId], references: [id])
+
+  // Relationships to Files and Embeds
+  files            ProjectFile[]
+  replitEmbeds     ReplitEmbed[]
+}
+
+// 5. File Types Enum
+enum FileType {
+  CAD
+  PDF
+  IMAGE
+}
+
+// 6. Project Files Table
+model ProjectFile {
+  id        String   @id @default(uuid())
+  fileName  String
+  fileType  FileType
+  fileUrl   String
+  fileSize  Int?     // Size in bytes
+  createdAt DateTime @default(now())
+
+  // Foreign Key to Project
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// 7. Replit Embeds Table
+model ReplitEmbed {
+  id        String   @id @default(uuid())
+  title     String
+  embedUrl  String
+  createdAt DateTime @default(now())
+
+  // Foreign Key to Project
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
