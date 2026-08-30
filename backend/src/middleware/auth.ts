@@ -1,0 +1,50 @@
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { Role } from '@prisma/client';
+import { JwtPayload } from '../types/express.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key';
+
+// 1. VERIFY JWT TOKEN
+export const authenticateToken = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const authHeader = req.headers['authorization'];
+  // Authorization header format: "Bearer <TOKEN>"
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    res.status(401).json({ error: 'Access denied. No token provided.' });
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    req.user = decoded; // Attach user payload ({ userId, role }) to request object
+    next();
+  } catch (error) {
+    res.status(403).json({ error: 'Invalid or expired token.' });
+    return;
+  }
+};
+
+// 2. REQUIRE SPECIFIC ROLES (RBAC)
+export const requireRole = (allowedRoles: Role[]) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      res.status(403).json({ 
+        error: `Access denied. Requires one of the following roles: ${allowedRoles.join(', ')}` 
+      });
+      return;
+    }
+
+    next();
+  };
+};

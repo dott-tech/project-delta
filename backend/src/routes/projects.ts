@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
-// 1. GET ALL PROJECTS (Includes files & Replit embed)
-router.get('/', async (req: Request, res: Response) => {
+// 1. GET ALL PROJECTS (Includes files & Replit embed - Protected by JWT)
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
   try {
     const projects = await prisma.project.findMany({
       include: {
@@ -26,8 +27,8 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// 2. GET SINGLE PROJECT BY ID
-router.get('/:id', async (req: Request, res: Response) => {
+// 2. GET SINGLE PROJECT BY ID (Protected by JWT)
+router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const project = await prisma.project.findUnique({
@@ -56,32 +57,38 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// 3. CREATE A NEW PROJECT
-router.post('/', async (req: Request, res: Response) => {
-  try {
-    const { title, projectType, location, description, createdByUserId } = req.body;
+// 3. CREATE A NEW PROJECT (Restricted to ADMIN and TEAM_MEMBER)
+router.post(
+  '/',
+  authenticateToken,
+  requireRole(['ADMIN', 'TEAM_MEMBER']),
+  async (req: Request, res: Response) => {
+    try {
+      const { title, projectType, location, description } = req.body;
 
-    if (!title || !projectType || !location || !createdByUserId) {
-      res.status(400).json({ 
-        error: 'title, projectType, location, and createdByUserId are required' 
+      if (!title || !projectType || !location) {
+        res.status(400).json({ 
+          error: 'title, projectType, and location are required' 
+        });
+        return;
+      }
+
+      // Automatically grabs the creator ID from the decoded JWT token
+      const newProject = await prisma.project.create({
+        data: {
+          title,
+          projectType,
+          location,
+          description,
+          createdByUserId: req.user!.userId,
+        },
       });
-      return;
+
+      res.status(201).json(newProject);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to create project', details: String(error) });
     }
-
-    const newProject = await prisma.project.create({
-      data: {
-        title,
-        projectType,
-        location,
-        description,
-        createdByUserId,
-      },
-    });
-
-    res.status(201).json(newProject);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create project', details: String(error) });
   }
-});
+);
 
 export default router;
