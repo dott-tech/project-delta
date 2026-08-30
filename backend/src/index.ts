@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
 import { prisma } from './db.js';
 
@@ -28,6 +29,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
 });
 
 // Register Project API Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 
 // Start Server
