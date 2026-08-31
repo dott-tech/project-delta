@@ -1,3 +1,4 @@
+// backend/src/index.ts
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -6,6 +7,7 @@ import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
 import fileRoutes from './routes/files.js';
 import { prisma } from './db.js';
+import userRoutes from './routes/user.js'; // 👈 Added .js extension
 
 dotenv.config();
 
@@ -37,6 +39,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api', fileRoutes);
+app.use('/api/users', userRoutes);
 
 // Start Server
 app.listen(PORT, () => {

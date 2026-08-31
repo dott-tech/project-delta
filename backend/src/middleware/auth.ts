@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
-import { JwtPayload } from '../types/express.js';
+import { JwtPayload } from '../types/express';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key';
 
