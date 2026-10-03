@@ -16,36 +16,41 @@ enum Role {
 
 // 3. User Table
 model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
+  id        String   @id @default(uuid())
+  email     String   @unique
   password  String
   name      String
-  role      Role      @default(CLIENT)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  role      Role     @default(CLIENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // Relationship: One user can create many projects
-  projects  Project[]
+  // Explicit named relations for created vs. updated projects
+  createdProjects Project[] @relation("CreatedProjects")
+  updatedProjects Project[] @relation("UpdatedProjects")
 }
 
 // 4. Project Table
 model Project {
-  id               String        @id @default(uuid())
-  title            String
-  description      String?
-  projectType      String        // e.g., "Commercial", "Residential", "Bridge"
-  location         String        // e.g., "Dubai", "London"
-  isArchived       Boolean       @default(false)
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  projectType String   // e.g., "Commercial", "Residential", "Bridge"
+  location    String   // e.g., "Dubai", "London"
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  // Foreign Key to User (Who created this project)
-  createdByUserId  String
-  createdBy        User          @relation(fields: [createdByUserId], references: [id])
+  // Foreign Key: Who created this project
+  createdByUserId String
+  createdBy       User   @relation("CreatedProjects", fields: [createdByUserId], references: [id])
+
+  // Foreign Key: Who last updated this project (Audit)
+  updatedByUserId String?
+  updatedBy       User?   @relation("UpdatedProjects", fields: [updatedByUserId], references: [id])
 
   // Relationships to Files and Embeds
-  files            ProjectFile[]
-  replitEmbeds     ReplitEmbed[]
+  files        ProjectFile[]
+  replitEmbeds ReplitEmbed[]
 }
 
 // 5. File Types Enum

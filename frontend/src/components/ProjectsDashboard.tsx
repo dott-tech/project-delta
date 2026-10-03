@@ -1,17 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Folder, MapPin, FileText, ExternalLink, Shield, Archive } from 'lucide-react';
+import { Plus, Folder, MapPin, FileText, Shield, Archive, Edit3, Clock, ExternalLink } from 'lucide-react';
 import { AdminUserDirectory } from './AdminUserDirectory';
+import { ProjectFilters } from './ProjectFilters';
+import { EditProjectModal } from './EditProjectModal';
 
 export interface Project {
   id: string;
   title: string;
-  description?: string;
+  description?: string | null;
   projectType: string;
   location: string;
   isArchived: boolean;
   createdAt: string;
+  updatedAt?: string;
+  createdBy?: { id: string; name: string; email: string };
+  updatedBy?: { id: string; name: string; email: string } | null;
   files?: Array<{ id: string; fileName: string; fileType: string }>;
 }
 
@@ -21,8 +26,15 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Filter States
   const [search, setSearch] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+
+  // Modal States
   const [showModal, setShowModal] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   // Form State for New Project
   const [title, setTitle] = useState('');
@@ -50,6 +62,15 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
     fetchProjects();
   }, []);
 
+  // Extract unique locations & project types for dropdown filters
+  const locationsList = useMemo(() => {
+    return Array.from(new Set(projects.map((p) => p.location).filter(Boolean)));
+  }, [projects]);
+
+  const typesList = useMemo(() => {
+    return Array.from(new Set(projects.map((p) => p.projectType).filter(Boolean)));
+  }, [projects]);
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -73,22 +94,36 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   };
 
   const handleArchiveProject = async (e: React.MouseEvent, projectId: string) => {
-    e.stopPropagation(); // Prevents opening project detail view
+    e.stopPropagation();
     if (!confirm('Are you sure you want to archive this project?')) return;
 
     try {
       await api.patch(`/projects/${projectId}/archive`, { isArchived: true });
-      fetchProjects();
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to archive project');
     }
   };
 
-  const filteredProjects = projects.filter((p) =>
-    p.title.toLowerCase().includes(search.toLowerCase()) ||
-    p.location.toLowerCase().includes(search.toLowerCase()) ||
-    p.projectType.toLowerCase().includes(search.toLowerCase())
-  );
+  // Advanced client-side filtering (Search + Location + Type)
+  const filteredProjects = useMemo(() => {
+    return projects.filter((p) => {
+      const matchesSearch =
+        search === '' ||
+        p.title.toLowerCase().includes(search.toLowerCase()) ||
+        p.location.toLowerCase().includes(search.toLowerCase()) ||
+        p.projectType.toLowerCase().includes(search.toLowerCase()) ||
+        (p.description && p.description.toLowerCase().includes(search.toLowerCase()));
+
+      const matchesLocation =
+        locationFilter === '' || p.location.toLowerCase() === locationFilter.toLowerCase();
+
+      const matchesType =
+        typeFilter === '' || p.projectType.toLowerCase() === typeFilter.toLowerCase();
+
+      return matchesSearch && matchesLocation && matchesType;
+    });
+  }, [projects, search, locationFilter, typeFilter]);
 
   return (
     <div className="space-y-6">
@@ -140,17 +175,22 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
       {/* PROJECTS TAB VIEW */}
       {activeTab === 'projects' && (
         <>
-          {/* Search Bar */}
-          <div className="relative max-w-md w-full">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search projects by title, type, or location..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-            />
-          </div>
+          {/* Enhanced Filter Toolbar */}
+          <ProjectFilters
+            search={search}
+            onSearchChange={setSearch}
+            locationFilter={locationFilter}
+            onLocationChange={setLocationFilter}
+            typeFilter={typeFilter}
+            onTypeChange={setTypeFilter}
+            locationsList={locationsList}
+            typesList={typesList}
+            onReset={() => {
+              setSearch('');
+              setLocationFilter('');
+              setTypeFilter('');
+            }}
+          />
 
           {/* Projects Grid */}
           {loading ? (
@@ -159,7 +199,9 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center">
               <Folder className="w-12 h-12 text-slate-600 mx-auto mb-3" />
               <h3 className="text-white font-medium mb-1">No Projects Found</h3>
-              <p className="text-slate-400 text-xs mb-4">Create your first project to start organizing CAD drawings and PDFs.</p>
+              <p className="text-slate-400 text-xs mb-4">
+                Try adjusting your search filters or create a new project.
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -167,43 +209,78 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                 <div
                   key={project.id}
                   onClick={() => onSelectProject(project.id)}
-                  className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 transition cursor-pointer flex flex-col justify-between group relative"
+                  className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 shadow-xl hover:shadow-2xl transition duration-200 cursor-pointer flex flex-col justify-between group relative"
                 >
-                  <div>
-                    <div className="flex justify-between items-start mb-3">
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-start">
                       <span className="text-[10px] font-semibold px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
                         {project.projectType}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
+                        {canCreate && (
+                          <button
+                            title="Edit Project"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingProject(project);
+                            }}
+                            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {isAdmin && (
                           <button
                             title="Archive Project"
                             onClick={(e) => handleArchiveProject(e, project.id)}
-                            className="p-1 hover:bg-slate-800 text-slate-600 hover:text-red-400 rounded-md transition"
+                            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded-lg transition"
                           >
-                            <Archive className="w-4 h-4" />
+                            <Archive className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <ExternalLink className="w-4 h-4 text-slate-600 group-hover:text-slate-300 transition" />
+                        <div className="p-1.5 text-slate-500 group-hover:text-slate-300">
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </div>
                       </div>
                     </div>
-                    <h3 className="text-white font-semibold text-lg group-hover:text-blue-400 transition mb-1">
-                      {project.title}
-                    </h3>
-                    <p className="text-slate-400 text-xs line-clamp-2 mb-4">
-                      {project.description || 'No description provided.'}
-                    </p>
+
+                    <div>
+                      <h3 className="text-white font-semibold text-base group-hover:text-blue-400 transition">
+                        {project.title}
+                      </h3>
+                      <p className="text-slate-400 text-xs line-clamp-2 mt-1">
+                        {project.description || 'No description provided.'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs text-slate-400 pt-1">
+                      <div className="flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                        <span>{project.location}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <FileText className="w-3.5 h-3.5 text-slate-500" />
+                        <span>{project.files?.length || 0} assets</span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="pt-4 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
-                    <div className="flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{project.location}</span>
+                  {/* Audit Footer */}
+                  <div className="border-t border-slate-800/80 pt-3 mt-4 space-y-1 text-[11px] text-slate-500">
+                    <div className="flex items-center justify-between">
+                      <span>Created by: {project.createdBy?.name || 'System'}</span>
+                      <span>{new Date(project.createdAt).toLocaleDateString()}</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <FileText className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{project.files?.length || 0} assets</span>
-                    </div>
+
+                    {project.updatedBy && project.updatedAt && (
+                      <div className="flex items-center justify-between text-slate-400 font-medium">
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-blue-400" />
+                          Edited by {project.updatedBy.name}
+                        </span>
+                        <span>{new Date(project.updatedAt).toLocaleDateString()}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -295,6 +372,18 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             </form>
           </div>
         </div>
+      )}
+
+      {/* Edit Project Modal */}
+      {editingProject && (
+        <EditProjectModal
+          project={editingProject}
+          isOpen={!!editingProject}
+          onClose={() => setEditingProject(null)}
+          onSuccess={() => {
+            fetchProjects();
+          }}
+        />
       )}
     </div>
   );

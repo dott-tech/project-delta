@@ -1,73 +1,73 @@
 import React, { useState } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { Login } from './components/login';
+import { useAuth } from './context/AuthContext';
+import { Navbar } from './components/Navbar';
 import { ProjectsDashboard } from './components/ProjectsDashboard';
-import { Building2, LogOut } from 'lucide-react';
+import { ProjectDetailView } from './components/ProjectDetailView';
+import { AdminUserDirectory } from './components/AdminUserDirectory';
+import { ArchivedProjectsList } from './components/ArchivedProjectsList';
+import { Login } from './components/login'; // Make sure the file name is 'login.tsx' or 'Login.tsx'
 
-const MainApp: React.FC = () => {
-  const { user, isAuthenticated, logout } = useAuth();
+export const App: React.FC = () => {
+  const { user, loading } = useAuth();
+  const [currentView, setCurrentView] = useState<'projects' | 'admin' | 'project-detail'>('projects');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
-  if (!isAuthenticated) {
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
+        Loading session...
+      </div>
+    );
+  }
+
+  if (!user) {
+    // FIX 1: Uppercase <Login /> so JSX recognizes it as a React component
     return <Login />;
   }
 
+  const handleSelectProject = (id: string) => {
+    setSelectedProjectId(id);
+    setCurrentView('project-detail');
+  };
+
+  const handleNavigate = (view: 'projects' | 'admin') => {
+    setSelectedProjectId(null);
+    setCurrentView(view);
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      {/* Top Navigation */}
-      <header className="bg-slate-900 border-b border-slate-800 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setSelectedProjectId(null)}>
-            <div className="p-2 bg-blue-600/10 border border-blue-500/20 rounded-lg text-blue-400">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-white tracking-wide">STRUCTURAL HUB</h1>
-              <p className="text-[11px] text-slate-400">Engineering Asset Platform</p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      <Navbar currentView={currentView} onNavigate={handleNavigate} />
 
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-xs font-medium text-white">{user?.name}</p>
-              <span className="text-[10px] text-blue-400 font-semibold">{user?.role}</span>
-            </div>
-            <button
-              onClick={logout}
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition border border-slate-700"
-              title="Logout"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto p-6">
-        {selectedProjectId ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <button
-              onClick={() => setSelectedProjectId(null)}
-              className="text-xs text-blue-400 hover:underline mb-4 inline-block"
-            >
-              &larr; Back to all projects
-            </button>
-            <h2 className="text-xl font-bold text-white">Project ID: {selectedProjectId}</h2>
-            <p className="text-slate-400 text-sm mt-1">Project Asset Detail & Upload View coming right up!</p>
-          </div>
-        ) : (
-          <ProjectsDashboard onSelectProject={(id) => setSelectedProjectId(id)} />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {currentView === 'projects' && (
+          <ProjectsDashboard onSelectProject={handleSelectProject} />
         )}
+
+        {currentView === 'project-detail' && selectedProjectId && (
+          <ProjectDetailView 
+            projectId={selectedProjectId} 
+            onBack={() => setCurrentView('projects')} 
+          />
+        )}
+
+       {currentView === 'admin' && user.role === 'ADMIN' && (
+  <div className="space-y-8">
+    <div className="border-b border-slate-800 pb-4">
+      <h2 className="text-xl font-bold text-white">System Administration</h2>
+      <p className="text-xs text-slate-400">Manage user access privileges, roles, and archived platform projects.</p>
+    </div>
+
+    {/* Users & Team Directory */}
+    <AdminUserDirectory />
+
+    {/* Archived Projects List */}
+    <ArchivedProjectsList />
+  </div>
+)}
       </main>
     </div>
   );
 };
 
-export default function App() {
-  return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
-  );
-}
+export default App;

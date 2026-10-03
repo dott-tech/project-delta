@@ -1,0 +1,131 @@
+import React, { useEffect, useState } from 'react';
+import { api } from '../api/client';
+import { Archive, RotateCcw, RefreshCw, FolderGit2, AlertTriangle } from 'lucide-react';
+
+export interface ArchivedProject {
+  id: string;
+  title: string;
+  projectType: string;
+  location: string;
+  updatedAt: string;
+}
+
+export const ArchivedProjectsList: React.FC = () => {
+  const [projects, setProjects] = useState<ArchivedProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  const fetchArchivedProjects = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      // FIX 1: Pass ?archived=true to match backend query parsing
+      const response = await api.get('/projects?archived=true');
+      setProjects(response.data);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to load archived projects.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchArchivedProjects();
+  }, []);
+
+  const handleRestoreProject = async (projectId: string) => {
+    try {
+      setRestoringId(projectId);
+      // FIX 2: Call /api/projects/:id/archive with { isArchived: false }
+      await api.patch(`/projects/${projectId}/archive`, { isArchived: false });
+
+      // Remove restored project from the list
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to restore project.');
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-sm flex items-center justify-center gap-2">
+        <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+        Loading archived projects...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-red-400 text-sm flex items-center gap-3">
+        <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
+        <div>{error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+        <div>
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <Archive className="w-5 h-5 text-amber-400" /> Archived Projects
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Review inactive project files and restore them to the active workspace.
+          </p>
+        </div>
+
+        <button
+          onClick={fetchArchivedProjects}
+          className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-xl transition w-fit"
+        >
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh Archive
+        </button>
+      </div>
+
+      {projects.length === 0 ? (
+        <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
+          <FolderGit2 className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+          <p className="text-slate-400 text-sm font-medium">No archived projects found</p>
+          <p className="text-slate-500 text-xs mt-1">Archived projects will appear here when deactivated.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm border-collapse">
+            <thead>
+              <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
+                <th className="py-3 px-4">Project Title</th>
+                <th className="py-3 px-4">Type</th>
+                <th className="py-3 px-4">Location</th>
+                <th className="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {projects.map((project) => (
+                <tr key={project.id} className="hover:bg-slate-800/30 transition">
+                  <td className="py-3.5 px-4 font-medium text-white">{project.title}</td>
+                  <td className="py-3.5 px-4 text-xs text-slate-400">{project.projectType}</td>
+                  <td className="py-3.5 px-4 text-slate-300 text-xs">{project.location}</td>
+                  <td className="py-3.5 px-4 text-right">
+                    <button
+                      disabled={restoringId === project.id}
+                      onClick={() => handleRestoreProject(project.id)}
+                      className="inline-flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs px-3 py-1.5 rounded-xl transition disabled:opacity-50"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      {restoringId === project.id ? 'Restoring...' : 'Restore'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
