@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { EditProjectModal } from './EditProjectModal';
@@ -41,8 +41,11 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
   const [project, setProject] = useState<ProjectDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isAdmin = user?.role === 'ADMIN';
   const canEdit = isAdmin || user?.role === 'TEAM_MEMBER';
@@ -63,38 +66,108 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
     fetchProjectDetails();
   }, [projectId]);
 
+  // --- DELETE PROJECT ---
+  const handleDeleteProject = async () => {
+    if (!project) return;
+    if (!window.confirm(`Are you sure you want to permanently delete "${project.title}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await api.delete(`/projects/${project.id}`);
+      onBack();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to delete project');
+    }
+  };
+
+  // --- S3 UPLOAD WITH PROGRESS TRACKING ---
   const handleFileUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
 
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-
     try {
       setUploading(true);
-      await api.post(`/projects/${projectId}/files`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      setUploadProgress(0);
+
+      // Determine asset category
+      let category: 'PDF' | 'CAD' | 'IMAGE' = 'PDF';
+      if (selectedFile.type.startsWith('image/')) {
+        category = 'IMAGE';
+      } else if (
+        selectedFile.name.toLowerCase().endsWith('.dwg') || 
+        selectedFile.name.toLowerCase().endsWith('.dxf')
+      ) {
+        category = 'CAD';
+      }
+
+      // Request presigned URL from API
+      const res = await api.post(`/projects/${projectId}/upload-url`, {
+        fileName: selectedFile.name,
+        contentType: selectedFile.type || 'application/octet-stream',
       });
+
+      const { uploadUrl, fileUrl, fileKey } = res.data;
+
+      // Upload directly to S3 via XHR
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', selectedFile.type || 'application/octet-stream');
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percent);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Network error during file upload'));
+        xhr.send(selectedFile);
+      });
+
+      // Register file record in database
+      await api.post(`/projects/${projectId}/files`, {
+        fileName: selectedFile.name,
+        fileType: category,
+        fileUrl,
+        fileKey,
+        fileSize: selectedFile.size,
+      });
+
+      // Reset state and input form
       setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       fetchProjectDetails();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to upload asset');
+      console.error('File upload error:', err);
+      alert(err.response?.data?.error || err.message || 'Failed to upload file');
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
   const handleDeleteFile = async (fileId: string) => {
-    if (!confirm('Are you sure you want to delete this file?')) return;
-    try {
-      await api.delete(`/files/${fileId}`);
-      fetchProjectDetails();
-    } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to delete file');
-    }
-  };
+  try {
+    await api.delete(`/projects/${projectId}/files/${fileId}`);
+    // Refresh project details or update UI state
+    fetchProjectDetails();
+  } catch (err: any) {
+    console.error('Failed to delete file:', err);
+    alert(err.response?.data?.error || 'Failed to delete file');
+  }
+};
 
-  if (loading) return <div className="p-8 text-center text-slate-500 text-sm">Loading...</div>;
+  if (loading) return <div className="p-8 text-center text-slate-500 text-sm">Loading project...</div>;
   if (!project) return <div className="p-8 text-center text-red-400 text-sm">Project not found.</div>;
 
   return (
@@ -102,7 +175,10 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl">
+          <button 
+            onClick={onBack} 
+            className="p-2 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl"
+          >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
@@ -113,17 +189,29 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
           </div>
         </div>
 
-        {canEdit && (
-          <button
-            onClick={() => setShowEditModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2.5 rounded-xl font-medium transition"
-          >
-            <Edit3 className="w-3.5 h-3.5" /> Edit Project
-          </button>
-        )}
+        {/* Action Controls */}
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <button
+              onClick={() => setShowEditModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2.5 rounded-xl font-medium transition"
+            >
+              <Edit3 className="w-3.5 h-3.5" /> Edit Project
+            </button>
+          )}
+
+          {isAdmin && (
+            <button
+              onClick={handleDeleteProject}
+              className="flex items-center gap-2 bg-red-500/10 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/20 text-xs px-4 py-2.5 rounded-xl font-medium transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete Project
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Info Overview */}
+      {/* Info Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-900 border border-slate-800 rounded-2xl p-4">
         <div className="flex items-center gap-3">
           <MapPin className="w-5 h-5 text-blue-400" />
@@ -150,29 +238,50 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
         </div>
       </div>
 
-      {/* Main Grid */}
+      {/* Content Area */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          {/* File Upload */}
+          
+          {/* Direct File Upload */}
           {canEdit && (
-            <form onSubmit={handleFileUpload} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center gap-4">
-              <input
-                type="file"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                className="text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 flex-1"
-              />
-              <button
-                type="submit"
-                disabled={!selectedFile || uploading}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs px-4 py-2 rounded-xl transition font-medium"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                {uploading ? 'Uploading...' : 'Upload Asset'}
-              </button>
-            </form>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <form onSubmit={handleFileUpload} className="flex items-center gap-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                  disabled={uploading}
+                  className="text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 flex-1"
+                />
+                <button
+                  type="submit"
+                  disabled={!selectedFile || uploading}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs px-4 py-2 rounded-xl transition font-medium shrink-0"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  {uploading ? 'Uploading...' : 'Upload Asset'}
+                </button>
+              </form>
+
+              {/* Progress Bar */}
+              {uploadProgress !== null && (
+                <div className="w-full pt-1">
+                  <div className="flex justify-between text-[11px] font-medium text-slate-400 mb-1">
+                    <span>Uploading directly to S3...</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-150"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
-          {/* Files List */}
+          {/* Project Files List */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
             <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
               <FileText className="w-4 h-4 text-blue-400" /> Project Files
@@ -196,10 +305,12 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
 
                     <div className="flex items-center gap-2">
                       <a
-                        href={`http://localhost:5000${file.fileUrl}`}
+                        href={file.fileUrl.startsWith('http') ? file.fileUrl : `http://localhost:5000${file.fileUrl}`}
                         target="_blank"
                         rel="noreferrer"
+                        download
                         className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg"
+                        title="Download / View File"
                       >
                         <Download className="w-3.5 h-3.5" />
                       </a>
@@ -207,6 +318,7 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
                         <button
                           onClick={() => handleDeleteFile(file.id)}
                           className="p-1.5 bg-slate-800 hover:bg-red-500/10 text-slate-500 hover:text-red-400 rounded-lg"
+                          title="Delete File"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -219,7 +331,7 @@ export const ProjectDetailView: React.FC<{ projectId: string; onBack: () => void
           </div>
         </div>
 
-        {/* Audit Log Sidebar */}
+        {/* Audit Log */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 h-fit">
           <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
             <History className="w-4 h-4 text-amber-400" /> Audit Log
