@@ -64,7 +64,8 @@ export const AdminUserDirectory: React.FC = () => {
     setCreatingInvite(true);
     try {
       const { data } = await api.post('/auth/invitations', { email: inviteEmail, role: inviteRole });
-      const link = `${window.location.origin}/#invite=${encodeURIComponent(data.token)}`;
+      const inviteParams = new URLSearchParams({ invite: data.token, email: data.invitation.email });
+      const link = `${window.location.origin}/#${inviteParams.toString()}`;
       setInviteUrl(link);
       setInviteEmail('');
       setCopiedInvite(false);

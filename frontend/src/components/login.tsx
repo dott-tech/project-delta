@@ -6,9 +6,11 @@ import { getApiErrorMessage } from '../utils/apiError';
 
 export const Login: React.FC = () => {
   const { login } = useAuth();
-  const inviteToken = new URLSearchParams(window.location.hash.slice(1)).get('invite') || '';
+  const inviteParams = new URLSearchParams(window.location.hash.slice(1));
+  const inviteToken = inviteParams.get('invite') || '';
+  const invitationEmail = inviteParams.get('email') || '';
   const [isRegistering, setIsRegistering] = useState(Boolean(inviteToken));
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(invitationEmail);
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -83,6 +85,7 @@ export const Login: React.FC = () => {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
               placeholder="engineer@structuralhub.com"
             />

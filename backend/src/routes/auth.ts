@@ -39,7 +39,7 @@ const sendDatabaseUnavailable = (res: Response) =>
 
 const hashInvitationToken = (token: string) => createHash('sha256').update(token).digest('hex');
 const loginLimiter = createRateLimiter(15 * 60 * 1000, 10, 'Too many login attempts. Try again in 15 minutes.');
-const registrationLimiter = createRateLimiter(60 * 60 * 1000, 5, 'Too many registration attempts. Try again in an hour.');
+const registrationLimiter = createRateLimiter(60 * 60 * 1000, 15, 'Too many registration attempts. Try again in an hour.');
 
 router.use((_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
