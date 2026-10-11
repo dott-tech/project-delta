@@ -2,15 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
 import { JwtPayload } from '../types/express';
+import { prisma } from '../db.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET || '';
 
 // 1. VERIFY JWT TOKEN
-export const authenticateToken = (
+export const authenticateToken = async (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Promise<void> => {
   const authHeader = req.headers['authorization'];
   // Authorization header format: "Bearer <TOKEN>"
   const token = authHeader && authHeader.split(' ')[1];
@@ -20,13 +21,39 @@ export const authenticateToken = (
     return;
   }
 
+  if (!JWT_SECRET) {
+    res.status(500).json({ error: 'Authentication is not configured on this server.' });
+    return;
+  }
+
+  let decoded: JwtPayload;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    req.user = decoded; // Attach user payload ({ userId, role }) to request object
+    decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
+  }
+
+  const userId = decoded.id || decoded.userId;
+  if (!userId || !Number.isInteger(decoded.authVersion)) {
+    res.status(401).json({ error: 'Your session is outdated. Please sign in again.' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, authVersion: true },
+    });
+    if (!user || user.authVersion !== decoded.authVersion || user.role !== decoded.role) {
+      res.status(401).json({ error: 'Your session is no longer valid. Please sign in again.' });
+      return;
+    }
+    req.user = { ...decoded, id: user.id, userId: user.id, role: user.role, authVersion: user.authVersion };
     next();
   } catch (error) {
-    res.status(403).json({ error: 'Invalid or expired token.' });
-    return;
+    console.error('Session validation failed because the database is unavailable:', error);
+    res.status(503).json({ error: 'Authentication is temporarily unavailable. Please try again.' });
   }
 };
 

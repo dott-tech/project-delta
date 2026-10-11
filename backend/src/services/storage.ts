@@ -31,7 +31,7 @@ export class StorageService {
     const provider = process.env.STORAGE_PROVIDER || 'LOCAL';
 
     if (provider === 'LOCAL') {
-      const fullPath = path.join(process.cwd(), filePath);
+      const fullPath = path.join(UPLOADS_DIR, path.basename(filePath));
       if (fs.existsSync(fullPath)) {
         await fs.promises.unlink(fullPath);
       }

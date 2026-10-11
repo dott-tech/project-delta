@@ -1,41 +1,31 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import { AuthContext, type User } from './auth-context';
 
-export type Role = 'ADMIN' | 'TEAM_MEMBER' | 'CLIENT';
-
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: Role;
-}
-
-interface AuthContextType {
-  user: User | null;
-  token: string | null;
-  loading: boolean; // <--- Added loading property
-  login: (token: string, user: User) => void;
-  logout: () => void;
-  isAuthenticated: boolean;
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const readCachedUser = (): User | null => {
+  if (!localStorage.getItem('token')) return null;
+  const savedUser = localStorage.getItem('user');
+  if (!savedUser) return null;
+  try {
+    return JSON.parse(savedUser) as User;
+  } catch (error) {
+    console.error('Failed to parse cached user:', error);
+    return null;
+  }
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [loading, setLoading] = useState<boolean>(true); // <--- Added loading state
+  const [user, setUser] = useState<User | null>(readCachedUser);
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
+  const loading = false;
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser && token) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (err) {
-        console.error('Failed to parse cached user:', err);
-      }
-    }
-    setLoading(false); // <--- Mark initialization as complete
-  }, [token]);
+    const handleExpiredSession = () => {
+      setToken(null);
+      setUser(null);
+    };
+    window.addEventListener('auth:expired', handleExpiredSession);
+    return () => window.removeEventListener('auth:expired', handleExpiredSession);
+  }, []);
 
   const login = (newToken: string, newUser: User) => {
     localStorage.setItem('token', newToken);
@@ -56,7 +46,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         token,
-        loading, // <--- Exposed loading property
+        loading,
         login,
         logout,
         isAuthenticated: !!token,
@@ -65,12 +55,4 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
 };

@@ -1,32 +1,26 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { api } from '../api/client';
-import { useAuth } from '../context/AuthContext';
-import { Plus, Folder, MapPin, FileText, Shield, Archive, Edit3, Clock, ExternalLink } from 'lucide-react';
-import { AdminUserDirectory } from './AdminUserDirectory';
+import { useAuth } from '../context/useAuth';
+import {
+  Plus, Folder, MapPin, FileText, Archive,
+  Edit3, Clock, ExternalLink, ChevronDown, ChevronRight,
+  Layers3, CircleAlert, TrendingUp
+} from 'lucide-react';
 import { ProjectFilters } from './ProjectFilters';
 import { EditProjectModal } from './EditProjectModal';
-
-export interface Project {
-  id: string;
-  title: string;
-  description?: string | null;
-  projectType: string;
-  location: string;
-  isArchived: boolean;
-  createdAt: string;
-  updatedAt?: string;
-  createdBy?: { id: string; name: string; email: string };
-  updatedBy?: { id: string; name: string; email: string } | null;
-  files?: Array<{ id: string; fileName: string; fileType: string }>;
-}
+import { PhaseTracker } from './PhaseTracker';
+import type { Project } from '../types/project';
+import { getApiErrorMessage } from '../utils/apiError';
 
 export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void }> = ({ onSelectProject }) => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'projects' | 'admin'>('projects');
-  
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   
+  // Accordion toggle state for sub-projects inside cards
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+
   // Filter States
   const [search, setSearch] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
@@ -41,26 +35,44 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   const [description, setDescription] = useState('');
   const [projectType, setProjectType] = useState('Commercial');
   const [location, setLocation] = useState('');
+  const [parentProjectId, setParentProjectId] = useState<string>('');
   const [error, setError] = useState('');
 
+  // Strictly enforce Admin privileges for creation & system management
   const isAdmin = user?.role === 'ADMIN';
-  const canCreate = isAdmin || user?.role === 'TEAM_MEMBER';
+  const canCreate = isAdmin; // Standard TEAM_MEMBER has read-only access on global level
 
-  const fetchProjects = async () => {
+  const loadProjects = useCallback(async () => {
     try {
-      setLoading(true);
       const response = await api.get('/projects');
       setProjects(response.data);
-    } catch (err: any) {
+      setLoadError('');
+    } catch (err: unknown) {
       console.error('Failed to load projects', err);
+      setLoadError(getApiErrorMessage(err, 'Could not load projects. Check your connection and try again.'));
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const fetchProjects = async () => {
+    setLoading(true);
+    setLoadError('');
+    await loadProjects();
   };
 
   useEffect(() => {
-    fetchProjects();
-  }, []);
+    const timeoutId = window.setTimeout(() => { void loadProjects(); }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadProjects]);
+
+  const toggleExpand = (e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation();
+    setExpandedProjects((prev) => ({
+      ...prev,
+      [projectId]: !prev[projectId],
+    }));
+  };
 
   // Extract unique locations & project types for dropdown filters
   const locationsList = useMemo(() => {
@@ -70,6 +82,33 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   const typesList = useMemo(() => {
     return Array.from(new Set(projects.map((p) => p.projectType).filter(Boolean)));
   }, [projects]);
+
+  const portfolio = useMemo(() => {
+    const packages = projects.flatMap((project) => project.subProjects || []);
+    const phases = [...projects, ...packages].flatMap((project) => project.phases || []);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const blocked = phases.filter((phase) => phase.status === 'BLOCKED').length;
+    const overdue = phases.filter((phase) => phase.status !== 'COMPLETED' && phase.endDate && new Date(phase.endDate) < today).length;
+    const needsAttention = phases.filter((phase) => phase.status === 'BLOCKED' || (phase.status !== 'COMPLETED' && phase.endDate && new Date(phase.endDate) < today)).length;
+    const progress = phases.length ? Math.round(phases.reduce((sum, phase) => {
+      if (phase.status === 'COMPLETED') return sum + 100;
+      if (phase.status === 'IN_PROGRESS') return sum + (phase.progressPercent ?? 50);
+      return sum;
+    }, 0) / phases.length) : 0;
+    return { packageCount: packages.length, phaseCount: phases.length, blocked, overdue, needsAttention, progress };
+  }, [projects]);
+
+  const statusFor = (project: Project) => {
+    const phases = [project, ...(project.subProjects || [])].flatMap((item) => item.phases || []);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (phases.some((phase) => phase.status === 'BLOCKED')) return { label: 'Needs attention', style: 'bg-rose-500/10 text-rose-300 border-rose-500/20' };
+    if (phases.some((phase) => phase.status !== 'COMPLETED' && phase.endDate && new Date(phase.endDate) < today)) return { label: 'Overdue', style: 'bg-amber-500/10 text-amber-300 border-amber-500/20' };
+    if (phases.length > 0 && phases.every((phase) => phase.status === 'COMPLETED')) return { label: 'Complete', style: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' };
+    if (phases.some((phase) => phase.status === 'IN_PROGRESS' || phase.status === 'COMPLETED')) return { label: 'In progress', style: 'bg-blue-500/10 text-blue-300 border-blue-500/20' };
+    return { label: 'Planning', style: 'bg-slate-700/60 text-slate-300 border-slate-600/60' };
+  };
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,15 +120,17 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
         description,
         projectType,
         location,
+        parentProjectId: parentProjectId || null,
       });
 
       setShowModal(false);
       setTitle('');
       setDescription('');
       setLocation('');
+      setParentProjectId('');
       fetchProjects();
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to create project');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to create project'));
     }
   };
 
@@ -100,12 +141,12 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
     try {
       await api.patch(`/projects/${projectId}/archive`, { isArchived: true });
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
-    } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to archive project');
+    } catch (err: unknown) {
+      alert(getApiErrorMessage(err, 'Failed to archive project'));
     }
   };
 
-  // Advanced client-side filtering (Search + Location + Type)
+  // Client-side filtering
   const filteredProjects = useMemo(() => {
     return projects.filter((p) => {
       const matchesSearch =
@@ -126,56 +167,33 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   }, [projects, search, locationFilter, typeFilter]);
 
   return (
-    <div className="space-y-6">
-      {/* Top Header & Navigation Bar */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center border-b border-slate-800 pb-4">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setActiveTab('projects')}
-            className={`px-4 py-2 text-sm font-medium rounded-xl transition flex items-center gap-2 ${
-              activeTab === 'projects'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
-                : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-            }`}
-          >
-            <Folder className="w-4 h-4" /> Projects Workspace
-          </button>
-
-          {isAdmin && (
-            <button
-              onClick={() => setActiveTab('admin')}
-              className={`px-4 py-2 text-sm font-medium rounded-xl transition flex items-center gap-2 ${
-                activeTab === 'admin'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
-                  : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-              }`}
-            >
-              <Shield className="w-4 h-4 text-amber-400" /> Admin Directory
+    <div className="dashboard-page space-y-7">
+      <section className="portfolio-hero relative overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/50 p-5 shadow-2xl shadow-black/20 sm:p-7">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-28 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="hero-copy max-w-2xl">
+            <div className="hero-kicker mb-3 inline-flex items-center gap-2 rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-300">
+              <Folder className="h-3.5 w-3.5" /> Engineering portfolio
+            </div>
+            <h2 className="hero-title text-2xl font-semibold tracking-tight text-white sm:text-3xl">Make big things <span>happen.</span></h2>
+            <p className="hero-description mt-2 max-w-xl text-sm leading-6 text-slate-400">Your projects, people, and progress—together in one place.</p>
+          </div>
+          {canCreate && (
+            <button onClick={() => setShowModal(true)} className="hero-action inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
+              <Plus className="h-4 w-4" /> New project
             </button>
           )}
         </div>
-
-        {activeTab === 'projects' && canCreate && (
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-xl transition shadow-lg shadow-blue-600/20 font-medium"
-          >
-            <Plus className="w-4 h-4" /> New Project
-          </button>
-        )}
-      </div>
-
-      {/* ADMIN TAB VIEW */}
-      {activeTab === 'admin' && isAdmin && (
-        <div className="mt-4">
-          <AdminUserDirectory />
+        <div className="hero-metrics relative mt-7 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <PortfolioMetric icon={<Folder className="h-4 w-4" />} label="Active projects" value={projects.length} detail="Top-level sites" tone="blue" />
+          <PortfolioMetric icon={<Layers3 className="h-4 w-4" />} label="Building packages" value={portfolio.packageCount} detail="Across your portfolio" tone="violet" />
+          <PortfolioMetric icon={<CircleAlert className="h-4 w-4" />} label="Needs attention" value={portfolio.needsAttention} detail={`${portfolio.blocked} blocked · ${portfolio.overdue} overdue`} tone={portfolio.needsAttention ? 'rose' : 'emerald'} />
+          <PortfolioMetric icon={<TrendingUp className="h-4 w-4" />} label="Phase progress" value={`${portfolio.progress}%`} detail={`${portfolio.phaseCount} tracked phases`} tone="emerald" progress={portfolio.progress} />
         </div>
-      )}
+      </section>
 
-      {/* PROJECTS TAB VIEW */}
-      {activeTab === 'projects' && (
-        <>
-          {/* Enhanced Filter Toolbar */}
+      <>
+          {loadError && <div role="alert" className="flex flex-col gap-3 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>{loadError}</span><button onClick={fetchProjects} className="rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs font-semibold hover:bg-rose-500/10">Try again</button></div>}
           <ProjectFilters
             search={search}
             onSearchChange={setSearch}
@@ -194,105 +212,179 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
 
           {/* Projects Grid */}
           {loading ? (
-            <div className="text-center py-12 text-slate-500 text-sm">Loading projects...</div>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading projects">
+              {Array.from({ length: 3 }, (_, index) => <div key={index} className="h-64 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/70" />)}
+            </div>
           ) : filteredProjects.length === 0 ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center">
-              <Folder className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-              <h3 className="text-white font-medium mb-1">No Projects Found</h3>
-              <p className="text-slate-400 text-xs mb-4">
-                Try adjusting your search filters or create a new project.
+            <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/60 px-6 py-14 text-center">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-700 bg-slate-800 text-slate-400"><Folder className="h-5 w-5" /></div>
+              <h3 className="font-semibold text-white">{projects.length ? 'No matching projects' : 'Your portfolio is ready'}</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">
+                {projects.length ? 'Try a different search or clear your filters.' : 'Create a site project to start organizing structures, phases, and engineering files.'}
               </p>
+              {!projects.length && canCreate && <button onClick={() => setShowModal(true)} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-400"><Plus className="h-4 w-4" /> Create your first project</button>}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredProjects.map((project) => (
-                <div
-                  key={project.id}
-                  onClick={() => onSelectProject(project.id)}
-                  className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 shadow-xl hover:shadow-2xl transition duration-200 cursor-pointer flex flex-col justify-between group relative"
-                >
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-start">
-                      <span className="text-[10px] font-semibold px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
-                        {project.projectType}
-                      </span>
-                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
-                        {canCreate && (
-                          <button
-                            title="Edit Project"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingProject(project);
-                            }}
-                            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {isAdmin && (
-                          <button
-                            title="Archive Project"
-                            onClick={(e) => handleArchiveProject(e, project.id)}
-                            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded-lg transition"
-                          >
-                            <Archive className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        <div className="p-1.5 text-slate-500 group-hover:text-slate-300">
-                          <ExternalLink className="w-3.5 h-3.5" />
+            <>
+            <div className="mb-3 flex items-center justify-between text-xs text-slate-500">
+              <span>{filteredProjects.length} {filteredProjects.length === 1 ? 'project' : 'projects'}</span>
+              <span className="hidden sm:inline">Select a project to open its delivery workspace</span>
+            </div>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {filteredProjects.map((project) => {
+                const hasSubProjects = project.subProjects && project.subProjects.length > 0;
+                const isExpanded = !!expandedProjects[project.id];
+
+                // Calculate cumulative total assets (parent + sub-projects)
+                const directFilesCount = project.files?.length || 0;
+                const subProjectsFilesCount = project.subProjects?.reduce(
+                  (acc, sub) => acc + (sub.files?.length || 0),
+                  0
+                ) || 0;
+                const totalAssets = directFilesCount + subProjectsFilesCount;
+
+                const projectStatus = statusFor(project);
+                return (
+                  <div
+                    key={project.id}
+                    onClick={() => onSelectProject(project.id)}
+                    onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onSelectProject(project.id); } }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${project.title}`}
+                    className="portfolio-card group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-lg shadow-black/10 transition duration-200 hover:-translate-y-0.5 hover:border-blue-500/40 hover:shadow-xl hover:shadow-blue-950/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                  >
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-400/40 to-transparent opacity-0 transition group-hover:opacity-100" />
+                    <div className="space-y-3">
+                      {/* Top Badges & Action Buttons */}
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-semibold px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
+                            {project.projectType}
+                          </span>
+                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${projectStatus.style}`}>{projectStatus.label}</span>
+                          {hasSubProjects && (
+                            <button
+                              onClick={(e) => toggleExpand(e, project.id)}
+                              className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white transition flex items-center gap-1 text-[10px]"
+                            >
+                              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                              <span>{project.subProjects!.length} packages</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
+                          {canCreate && (
+                            <button
+                              title="Edit Project"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingProject(project);
+                              }}
+                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {isAdmin && (
+                            <button
+                              title="Archive Project"
+                              onClick={(e) => handleArchiveProject(e, project.id)}
+                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded-lg transition"
+                            >
+                              <Archive className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <div aria-hidden="true" className="p-1.5 text-slate-500 group-hover:text-slate-300">
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </div>
                         </div>
                       </div>
+
+                      {/* Title & Description */}
+                      <div>
+                        <h3 className="text-white font-semibold text-base group-hover:text-blue-400 transition">
+                          {project.title}
+                        </h3>
+                        <p className="text-slate-400 text-xs line-clamp-2 mt-1">
+                          {project.description || 'No description provided.'}
+                        </p>
+                      </div>
+
+                      {/* Phase Tracker Bar */}
+                      <div className="pt-1">
+                        <PhaseTracker phases={project.phases || []} />
+                      </div>
+
+                      {/* Location & Files */}
+                      <div className="flex items-center gap-4 text-xs text-slate-400 pt-1">
+                        <div className="flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                          <span>{project.location}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-slate-500" />
+                          <span>{totalAssets} assets</span>
+                        </div>
+                      </div>
+
+                      {/* Accordion List for Sub-Projects inside Card */}
+                      {hasSubProjects && isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-slate-800 space-y-2 pl-2">
+                          <span className="text-[10px] font-semibold text-slate-500 uppercase">Sub-Projects</span>
+                          {project.subProjects!.map((sub) => (
+                            <div
+                              key={sub.id}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); onSelectProject(sub.id); } }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectProject(sub.id);
+                              }}
+                              className="space-y-1 rounded-lg border border-slate-800 bg-slate-950 p-2.5 transition hover:border-blue-500/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                            >
+                              <div className="flex justify-between items-center text-xs">
+                                <span className="font-medium text-slate-200">{sub.title}</span>
+                                <span className="text-[10px] text-slate-500">{sub.location}</span>
+                              </div>
+                              <PhaseTracker phases={sub.phases || []} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
-                    <div>
-                      <h3 className="text-white font-semibold text-base group-hover:text-blue-400 transition">
-                        {project.title}
-                      </h3>
-                      <p className="text-slate-400 text-xs line-clamp-2 mt-1">
-                        {project.description || 'No description provided.'}
-                      </p>
-                    </div>
+                    {/* Audit Footer */}
+                    <div className="border-t border-slate-800/80 pt-3 mt-4 space-y-1 text-[11px] text-slate-500">
+                      <div className="flex items-center justify-between">
+                        <span>Created by: {project.createdBy?.name || 'System'}</span>
+                        <span>{new Date(project.createdAt).toLocaleDateString()}</span>
+                      </div>
 
-                    <div className="flex items-center gap-4 text-xs text-slate-400 pt-1">
-                      <div className="flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-slate-500" />
-                        <span>{project.location}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5 text-slate-500" />
-                        <span>{project.files?.length || 0} assets</span>
-                      </div>
+                      {project.updatedBy && project.updatedAt && (
+                        <div className="flex items-center justify-between text-slate-400 font-medium">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-blue-400" />
+                            Edited by {project.updatedBy.name}
+                          </span>
+                          <span>{new Date(project.updatedAt).toLocaleDateString()}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  {/* Audit Footer */}
-                  <div className="border-t border-slate-800/80 pt-3 mt-4 space-y-1 text-[11px] text-slate-500">
-                    <div className="flex items-center justify-between">
-                      <span>Created by: {project.createdBy?.name || 'System'}</span>
-                      <span>{new Date(project.createdAt).toLocaleDateString()}</span>
-                    </div>
-
-                    {project.updatedBy && project.updatedAt && (
-                      <div className="flex items-center justify-between text-slate-400 font-medium">
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-blue-400" />
-                          Edited by {project.updatedBy.name}
-                        </span>
-                        <span>{new Date(project.updatedAt).toLocaleDateString()}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+            </>
           )}
-        </>
-      )}
+      </>
 
       {/* Create Project Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:p-6">
             <h2 className="text-lg font-bold text-white mb-4">Create Engineering Project</h2>
 
             {error && (
@@ -312,6 +404,24 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                   placeholder="e.g. Metro Station Line 3 Extension"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                  Parent Project (Optional)
+                </label>
+                <select
+                  value={parentProjectId}
+                  onChange={(e) => setParentProjectId(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">None (Top-Level Parent Project)</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title} ({p.location})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -386,5 +496,37 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
         />
       )}
     </div>
+  );
+};
+
+type PortfolioMetricProps = {
+  icon: React.ReactNode;
+  label: string;
+  value: string | number;
+  detail: string;
+  tone: 'blue' | 'violet' | 'rose' | 'emerald';
+  progress?: number;
+};
+
+const PortfolioMetric: React.FC<PortfolioMetricProps> = ({ icon, label, value, detail, tone, progress }) => {
+  const tones = {
+    blue: 'border-blue-400/20 bg-blue-400/10 text-blue-300',
+    violet: 'border-violet-400/20 bg-violet-400/10 text-violet-300',
+    rose: 'border-rose-400/20 bg-rose-400/10 text-rose-300',
+    emerald: 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300',
+  };
+  return (
+    <article className="min-w-0 rounded-2xl border border-slate-700/70 bg-slate-950/55 p-3.5 backdrop-blur-sm sm:p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[11px] font-medium text-slate-400 sm:text-xs">{label}</span>
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${tones[tone]}`}>{icon}</span>
+      </div>
+      <div className="mt-3 flex items-end justify-between gap-2">
+        <strong className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{value}</strong>
+        {progress !== undefined && <span className="pb-1 text-[10px] font-semibold text-emerald-300">portfolio</span>}
+      </div>
+      <p className="mt-1 truncate text-[10px] text-slate-500 sm:text-[11px]">{detail}</p>
+      {progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
+    </article>
   );
 };

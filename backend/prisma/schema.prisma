@@ -1,87 +1,164 @@
-// 1. Database Configuration
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
 }
 
 generator client {
   provider = "prisma-client-js"
 }
 
-// 2. User Roles Enum
+// Global System Roles
 enum Role {
   ADMIN
   TEAM_MEMBER
   CLIENT
 }
 
-// 3. User Table
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      Role     @default(CLIENT)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Explicit named relations for created vs. updated projects
-  createdProjects Project[] @relation("CreatedProjects")
-  updatedProjects Project[] @relation("UpdatedProjects")
+// Project Level Roles
+enum ProjectRole {
+  ADMIN
+  MANAGER
+  EDITOR
+  VIEWER
 }
 
-// 4. Project Table
-model Project {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  projectType String   // e.g., "Commercial", "Residential", "Bridge"
-  location    String   // e.g., "Dubai", "London"
-  isArchived  Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Foreign Key: Who created this project
-  createdByUserId String
-  createdBy       User   @relation("CreatedProjects", fields: [createdByUserId], references: [id])
-
-  // Foreign Key: Who last updated this project (Audit)
-  updatedByUserId String?
-  updatedBy       User?   @relation("UpdatedProjects", fields: [updatedByUserId], references: [id])
-
-  // Relationships to Files and Embeds
-  files        ProjectFile[]
-  replitEmbeds ReplitEmbed[]
+enum PhaseStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
 }
 
-// 5. File Types Enum
 enum FileType {
   CAD
   PDF
   IMAGE
+  OTHER
 }
 
-// 6. Project Files Table
-model ProjectFile {
+model User {
   id        String   @id @default(uuid())
-  fileName  String
-  fileType  FileType
-  fileUrl   String
-  fileSize  Int?     // Size in bytes
+  email     String   @unique
+  name      String
+  password  String
+  role      Role     @default(TEAM_MEMBER)
+  authVersion Int     @default(0)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // Foreign Key to Project
+  // Relationships
+  projectMemberships ProjectMember[]
+  createdProjects    Project[]       @relation("CreatedProjects")
+  updatedProjects    Project[]       @relation("UpdatedProjects")
+  projectActivities  ProjectActivity[]
+  sentInvitations    Invitation[]      @relation("InvitationCreator")
+}
+
+model Invitation {
+  id          String    @id @default(uuid())
+  email       String
+  role        Role      @default(CLIENT)
+  tokenHash   String    @unique @db.VarChar(64)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  createdById String
+  createdBy   User      @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([email, acceptedAt, revokedAt])
+  @@index([expiresAt])
+}
+
+model Project {
+  id              String   @id @default(uuid())
+  title           String
+  description     String?
+  projectType     String   // e.g. "Industrial Master Plan", "Logistics Park"
+  location        String
+  isArchived      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Facility / Building Package Specifics
+  buildingCode    String?  // e.g. "WH-01", "SUB-02", "PROC-PLANT"
+  facilityType    String?  // e.g. "Warehouse", "Substation", "Office", "Utilities"
+
+  // Master Project -> Building Package Self-Relation
+  parentProjectId String?
+  parentProject   Project?  @relation("ProjectPackages", fields: [parentProjectId], references: [id], onDelete: Cascade)
+  subProjects     Project[] @relation("ProjectPackages")
+
+  // Audit Relations
+  createdByUserId String
+  createdBy       User     @relation("CreatedProjects", fields: [createdByUserId], references: [id])
+  updatedByUserId String?
+  updatedBy       User?    @relation("UpdatedProjects", fields: [updatedByUserId], references: [id])
+
+  // Independent Entities Per Building Package
+  phases       ProjectPhase[]
+  members      ProjectMember[]
+  files        ProjectFile[]
+  replitEmbeds ReplitEmbed[]
+  activities   ProjectActivity[]
+}
+
+model ProjectActivity {
+  id        String   @id @default(uuid())
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  details   String
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
 }
 
-// 7. Replit Embeds Table
+model ProjectPhase {
+  id              String      @id @default(uuid())
+  projectId       String
+  project         Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name            String
+  order           Int
+  status          PhaseStatus @default(NOT_STARTED)
+  progressPercent Int         @default(0) // <-- MUST BE HERE
+  startDate       DateTime?
+  endDate         DateTime?
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model ProjectMember {
+  id        String      @id @default(uuid())
+  projectId String
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ProjectRole @default(VIEWER)
+  createdAt DateTime    @default(now())
+
+  @@unique([projectId, userId])
+}
+
+model ProjectFile {
+  id           String        @id @default(uuid())
+  projectId    String
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName     String
+  fileUrl      String
+  fileType     FileType      @default(OTHER)
+  fileSize     Int?
+  allowedRoles ProjectRole[] @default([ADMIN])
+  createdAt    DateTime      @default(now())
+}
+
 model ReplitEmbed {
   id        String   @id @default(uuid())
-  title     String
-  embedUrl  String
-  createdAt DateTime @default(now())
-
-  // Foreign Key to Project
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  embedUrl  String
+  title     String?
+  createdAt DateTime @default(now())
 }
