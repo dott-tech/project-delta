@@ -253,11 +253,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .app-shell .border-blue-500\/20,
 .app-shell .border-blue-500\/30,
 .app-shell .border-blue-400\/20 { border-color: rgba(200,255,84,.24) !important; }
-.app-shell .workbench-panel button[class*="hover:bg-blue-600"]:hover:not(:disabled) {
-  border-color: rgba(200,255,84,.45) !important;
-  color: #171a11 !important;
-  background: #c8ff54 !important;
-}
 .app-shell .bg-blue-500.h-full { background-color: #c8ff54 !important; }
 
 /* One clear primary action style, with quieter surfaces for secondary actions. */
@@ -1508,4 +1503,39 @@ select:focus-visible, textarea:focus-visible {
 
 @media (max-width: 760px) {
   .studio-nav { border: 0 !important; padding: 0 !important; background: transparent !important; }
+}
+
+/* Keep the building workbench action aligned with the Structural Hub palette. */
+.workspace-shell .workbench-panel button[class*="hover:bg-blue-600"]:hover:not(:disabled) {
+  border-color: rgba(165,215,232,.56) !important;
+  color: #f2fbfd !important;
+  background: linear-gradient(120deg, #0b3a5f, #12517b) !important;
+  box-shadow: 0 0 0 3px rgba(165,215,232,.1), 0 8px 22px rgba(2,6,23,.28) !important;
+  transform: translateY(-1px);
+}
+.workspace-shell .workbench-panel button[class*="hover:bg-blue-600"]:focus-visible {
+  outline: 2px solid #a5d7e8 !important;
+  outline-offset: 2px;
+  border-color: rgba(165,215,232,.56) !important;
+  color: #f2fbfd !important;
+  background: linear-gradient(120deg, #0b3a5f, #12517b) !important;
+}
+
+/* Sign-in and invitation sign-up share the same submit button. */
+.auth-page .auth-card button[type="submit"] {
+  border: 1px solid rgba(165,215,232,.38) !important;
+  color: #e8f3f7 !important;
+  background: linear-gradient(110deg, #0b3a5f, #104a73) !important;
+  box-shadow: 0 8px 24px rgba(11,58,95,.28) !important;
+}
+.auth-page .auth-card button[type="submit"]:hover:not(:disabled),
+.auth-page .auth-card button[type="submit"]:focus-visible {
+  border-color: rgba(165,215,232,.72) !important;
+  color: #f7fcfd !important;
+  background: linear-gradient(110deg, #12517b, #17648d) !important;
+  box-shadow: 0 0 0 3px rgba(165,215,232,.14), 0 10px 28px rgba(11,58,95,.4) !important;
+}
+.auth-page .auth-card button[type="submit"]:focus-visible {
+  outline: 2px solid #a5d7e8 !important;
+  outline-offset: 3px;
 }
