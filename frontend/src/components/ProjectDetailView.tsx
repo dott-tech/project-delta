@@ -3,9 +3,11 @@ import { api } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import type { Project, ProjectFile, PhaseStatus, ProjectRole } from '../types/project';
 import { getApiErrorMessage } from '../utils/apiError';
+import { beginActionLoading } from '../utils/actionLoading';
 import { PhaseTracker } from './PhaseTracker';
 import { ProjectActivityLog } from './ProjectActivityLog';
 import { ModalPortal } from './ModalPortal';
+import { LoadingCard } from './LoadingCard';
 import { 
   ArrowLeft, FileText, Upload, Trash2, Download, Eye, X,
   Users, Plus, Edit3, AlertCircle, Shield, Settings, Save, ArrowRight, Building2
@@ -364,6 +366,7 @@ export const ProjectDetailView: React.FC<Props> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const finishLoading = beginActionLoading('Uploading project file');
     try {
       setUploading(true);
       const { data } = await api.post(`/projects/${projectId}/upload-url`, {
@@ -391,6 +394,7 @@ export const ProjectDetailView: React.FC<Props> = ({
       alert(getApiErrorMessage(err, 'File upload failed'));
     } finally {
       setUploading(false);
+      finishLoading();
     }
   };
 
@@ -515,7 +519,14 @@ export const ProjectDetailView: React.FC<Props> = ({
   };
 
   if (loading || loadedProjectId !== projectId) {
-    return <div className="py-12 text-center text-slate-400 text-sm">Loading industrial project workbench...</div>;
+    return (
+      <div className="project-loading-screen">
+        <LoadingCard
+          label="Opening project workbench"
+          caption="Loading project details, files, and team access"
+        />
+      </div>
+    );
   }
 
   if (error || !project) {
