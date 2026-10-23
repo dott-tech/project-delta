@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { X, Edit3, Loader2 } from 'lucide-react';
 import type { Project } from '../types/project';
 import { getApiErrorMessage } from '../utils/apiError';
+import { ModalPortal } from './ModalPortal';
 
 interface EditProjectModalProps {
   project: Project;
@@ -72,6 +73,7 @@ const EditProjectModalForm: React.FC<EditProjectModalProps> = ({
   );
 
   return (
+    <ModalPortal>
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="relative max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:p-6">
         {/* Header */}
@@ -197,5 +199,6 @@ const EditProjectModalForm: React.FC<EditProjectModalProps> = ({
         </form>
       </div>
     </div>
+    </ModalPortal>
   );
 };

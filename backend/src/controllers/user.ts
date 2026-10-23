@@ -44,13 +44,26 @@ export const updateUserRole = async (req: Request, res: Response) => {
       if (adminCount <= 1) return res.status(400).json({ error: 'The last administrator cannot be demoted' });
     }
 
-    const updatedUser = await prisma.user.update({
-      where: { id },
-      data: {
-        role,
-        ...(targetUser.role !== role && { authVersion: { increment: 1 } }),
-      },
-      select: { id: true, name: true, email: true, role: true },
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id },
+        data: {
+          role,
+          ...(targetUser.role !== role && { authVersion: { increment: 1 } }),
+        },
+        select: { id: true, name: true, email: true, role: true },
+      });
+
+      // Downgrade project memberships in the same transaction when an account
+      // becomes a client, so stale assignments cannot leave write access behind.
+      if (role === 'CLIENT') {
+        await tx.projectMember.updateMany({
+          where: { userId: id, role: { not: 'VIEWER' } },
+          data: { role: 'VIEWER' },
+        });
+      }
+
+      return user;
     });
 
     res.json(updatedUser);

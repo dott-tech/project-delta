@@ -82,6 +82,8 @@ router.post(
       // Save via abstraction service
       const fileUrl = await StorageService.saveFile(file);
       const mappedFileType = getPrismaFileType(file.originalname);
+      const user = (req as any).user;
+      const uploaderId = user.id || user.userId || user.sub;
 
       // Save record to ProjectFile model
       const fileRecord = await prisma.projectFile.create({
@@ -92,11 +94,12 @@ router.post(
           fileSize: file.size,
           projectId: String(projectId),
           allowedRoles: ['VIEWER'],
+          reviewStatus: 'DRAFT',
+          uploadedByUserId: uploaderId,
         },
       });
 
-      const user = (req as any).user;
-      await recordFileActivity(String(projectId), user.id || user.userId || user.sub, 'file.uploaded', `Uploaded “${fileRecord.fileName}”`);
+      await recordFileActivity(String(projectId), uploaderId, 'file.draft_created', `Uploaded “${fileRecord.fileName}” as a draft`);
 
       res.status(201).json({
         message: 'File uploaded successfully',
@@ -124,6 +127,9 @@ router.get('/files/:id/download', authenticateToken, async (req: Request, res: R
       const projectRole = await getEffectiveProjectRole(file.projectId, userId);
       if (user.role !== 'TEAM_MEMBER' || projectRole !== 'EDITOR') {
         return res.status(403).json({ error: 'Downloads are available to admins and assigned editor team members only' });
+      }
+      if (file.reviewStatus !== 'APPROVED' && file.uploadedByUserId !== userId) {
+        return res.status(403).json({ error: 'Unapproved drafts can only be downloaded by their uploader or a system admin' });
       }
     }
 

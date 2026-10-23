@@ -15,10 +15,16 @@ enum Role {
 
 // Project Level Roles
 enum ProjectRole {
-  ADMIN
   MANAGER
   EDITOR
   VIEWER
+}
+
+enum FileReviewStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
 }
 
 enum PhaseStatus {
@@ -51,6 +57,8 @@ model User {
   updatedProjects    Project[]       @relation("UpdatedProjects")
   projectActivities  ProjectActivity[]
   sentInvitations    Invitation[]      @relation("InvitationCreator")
+  uploadedProjectFiles ProjectFile[]   @relation("ProjectFileUploader")
+  reviewedProjectFiles ProjectFile[]   @relation("ProjectFileReviewer")
 }
 
 model Invitation {
@@ -143,15 +151,24 @@ model ProjectMember {
 }
 
 model ProjectFile {
-  id           String        @id @default(uuid())
-  projectId    String
-  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  fileName     String
-  fileUrl      String
-  fileType     FileType      @default(OTHER)
-  fileSize     Int?
-  allowedRoles ProjectRole[] @default([ADMIN])
-  createdAt    DateTime      @default(now())
+  id                String           @id @default(uuid())
+  projectId         String
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName          String
+  fileUrl           String
+  fileType          FileType         @default(OTHER)
+  fileSize          Int?
+  allowedRoles      ProjectRole[]    @default([MANAGER])
+  reviewStatus      FileReviewStatus @default(DRAFT)
+  uploadedByUserId  String?
+  uploadedBy        User?            @relation("ProjectFileUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  reviewedByUserId  String?
+  reviewedBy        User?            @relation("ProjectFileReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  reviewComment     String?
+  createdAt         DateTime         @default(now())
+
+  @@index([projectId, reviewStatus, createdAt])
 }
 
 model ReplitEmbed {

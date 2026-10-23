@@ -1,5 +1,6 @@
 export type PhaseStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'BLOCKED' | 'COMPLETED';
-export type ProjectRole = 'ADMIN' | 'MANAGER' | 'EDITOR' | 'VIEWER';
+export type ProjectRole = 'MANAGER' | 'EDITOR' | 'VIEWER';
+export type FileReviewStatus = 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 
 export interface ProjectPhase {
   id: string;
@@ -21,6 +22,7 @@ export interface ProjectMember {
     id: string;
     name: string;
     email: string;
+    role?: 'ADMIN' | 'TEAM_MEMBER' | 'CLIENT';
   };
 }
 
@@ -32,6 +34,11 @@ export interface ProjectFile {
   downloadUrl?: string;
   fileSize?: number | null;
   allowedRoles?: ProjectRole[];
+  reviewStatus: FileReviewStatus;
+  uploadedByUserId?: string | null;
+  reviewedByUserId?: string | null;
+  reviewedAt?: string | null;
+  reviewComment?: string | null;
   createdAt?: string;
 }
 

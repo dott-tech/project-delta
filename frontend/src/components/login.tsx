@@ -49,10 +49,10 @@ export const Login: React.FC = () => {
 
           <span className="auth-eyebrow">StructuralHub · Project studio</span>
           <h2 className="text-2xl font-bold text-white mb-2">
-            {isRegistering ? 'A better way to build.' : 'Good to have you back.'}
+            {isRegistering ? 'Structural engineering, coordinated.' : 'Welcome back.'}
           </h2>
           <p className="text-slate-400 text-sm">
-            {isRegistering ? 'Create your account to join the workspace.' : 'Your projects and people are right where you left them.'}
+            {isRegistering ? 'Create your account to access your project workspace.' : 'Sign in to continue to your projects and team workspace.'}
           </p>
         </div>
 

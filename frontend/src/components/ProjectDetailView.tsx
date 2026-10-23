@@ -5,6 +5,7 @@ import type { Project, ProjectFile, PhaseStatus, ProjectRole } from '../types/pr
 import { getApiErrorMessage } from '../utils/apiError';
 import { PhaseTracker } from './PhaseTracker';
 import { ProjectActivityLog } from './ProjectActivityLog';
+import { ModalPortal } from './ModalPortal';
 import { 
   ArrowLeft, FileText, Upload, Trash2, Download, Eye, X,
   Users, Plus, Edit3, AlertCircle, Shield, Settings, Save, ArrowRight, Building2
@@ -13,6 +14,8 @@ import {
 const PdfDocumentViewer = React.lazy(() =>
   import('./PdfDocumentViewer').then((module) => ({ default: module.PdfDocumentViewer }))
 );
+
+const ENGINEERING_PHASES = ['Concept Design', 'Design Calculation', 'Modeling', 'Sheeting'] as const;
 
 interface Props {
   projectId: string;
@@ -78,6 +81,9 @@ export const ProjectDetailView: React.FC<Props> = ({
   // Phase Creation State
   const [showPhaseModal, setShowPhaseModal] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
+  const availablePhaseNames = ENGINEERING_PHASES.filter(
+    (phaseName) => !project?.phases?.some((phase) => phase.name === phaseName)
+  );
 
   // Team Access State
   const [showMemberModal, setShowMemberModal] = useState(false);
@@ -85,7 +91,7 @@ export const ProjectDetailView: React.FC<Props> = ({
   const [memberRole, setMemberRole] = useState<ProjectRole>('VIEWER');
   const [usersList, setUsersList] = useState<UserOption[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [editingMember, setEditingMember] = useState<{ userId: string; name: string } | null>(null);
+  const [editingMember, setEditingMember] = useState<{ userId: string; name: string; accountRole: string } | null>(null);
 
   // File Uploading & Role Permissions State
   const [uploading, setUploading] = useState(false);
@@ -94,6 +100,9 @@ export const ProjectDetailView: React.FC<Props> = ({
   // File Permission Edit Modal State
   const [editingFile, setEditingFile] = useState<{ id: string; name: string; roles: ProjectRole[] } | null>(null);
   const [savingFilePermissions, setSavingFilePermissions] = useState(false);
+  const [reviewingFile, setReviewingFile] = useState<ProjectFile | null>(null);
+  const [reviewComment, setReviewComment] = useState('');
+  const [savingReview, setSavingReview] = useState(false);
   const [filePreview, setFilePreview] = useState<{
     id: string;
     name: string;
@@ -142,13 +151,17 @@ export const ProjectDetailView: React.FC<Props> = ({
   const currentUserAssignment = project?.members?.find(
     (m) => m.user.id === currentUserId || m.userId === currentUserId
   );
-  const userProjectRole = project?.effectiveProjectRole || currentUserAssignment?.role;
+  const userProjectRole = user?.role === 'CLIENT'
+    ? 'VIEWER'
+    : project?.effectiveProjectRole || currentUserAssignment?.role;
 
   // Has write access if system ADMIN OR assigned as EDITOR/MANAGER
   const canEdit = isAdmin || userProjectRole === 'EDITOR' || userProjectRole === 'MANAGER';
   // Has manager access if system ADMIN OR assigned as MANAGER
   const canManage = isAdmin || userProjectRole === 'MANAGER';
   const canDownloadFiles = isAdmin || (user?.role === 'TEAM_MEMBER' && userProjectRole === 'EDITOR');
+  const selectedAccountRole = editingMember?.accountRole || usersList.find((availableUser) => availableUser.id === memberUserId)?.role;
+  const selectedUserIsClient = selectedAccountRole === 'CLIENT';
 
   // Open Edit Project Modal with populated inputs
   const handleOpenEditProject = () => {
@@ -262,7 +275,10 @@ export const ProjectDetailView: React.FC<Props> = ({
       setLoadingUsers(true);
       const { data } = await api.get(`/projects/${projectId}/available-users`);
       setUsersList(data);
-      if (data.length > 0) setMemberUserId(data[0].id);
+      if (data.length > 0) {
+        setMemberUserId(data[0].id);
+        if (data[0].role === 'CLIENT') setMemberRole('VIEWER');
+      }
       setShowMemberModal(true);
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to load user directory for role assignment'));
@@ -272,10 +288,10 @@ export const ProjectDetailView: React.FC<Props> = ({
   };
 
   // Open Edit Role modal for an existing assigned member
-  const handleEditMemberRole = (userId: string, userName: string, currentRole: ProjectRole) => {
-    setEditingMember({ userId, name: userName });
+  const handleEditMemberRole = (userId: string, userName: string, currentRole: ProjectRole, accountRole: string) => {
+    setEditingMember({ userId, name: userName, accountRole });
     setMemberUserId(userId);
-    setMemberRole(currentRole);
+    setMemberRole(accountRole === 'CLIENT' ? 'VIEWER' : currentRole);
     setShowMemberModal(true);
   };
 
@@ -302,17 +318,6 @@ export const ProjectDetailView: React.FC<Props> = ({
       refreshProject();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to update phase status'));
-    }
-  };
-
-  // Delete Phase
-  const handleDeletePhase = async (phaseId: string) => {
-    if (!confirm('Are you sure you want to delete this phase?')) return;
-    try {
-      await api.delete(`/projects/${projectId}/phases/${phaseId}`);
-      refreshProject();
-    } catch (err: unknown) {
-      alert(getApiErrorMessage(err, 'Failed to delete phase'));
     }
   };
 
@@ -386,6 +391,38 @@ export const ProjectDetailView: React.FC<Props> = ({
       alert(getApiErrorMessage(err, 'File upload failed'));
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleSubmitFileForReview = async (file: ProjectFile) => {
+    try {
+      await api.post(`/projects/${projectId}/files/${file.id}/submit-review`);
+      refreshProject();
+    } catch (err: unknown) {
+      alert(getApiErrorMessage(err, 'Failed to submit file for review'));
+    }
+  };
+
+  const handleReviewDecision = async (decision: 'APPROVED' | 'REJECTED') => {
+    if (!reviewingFile) return;
+    if (decision === 'REJECTED' && !reviewComment.trim()) {
+      alert('Add a reason so the uploader knows what to fix.');
+      return;
+    }
+
+    try {
+      setSavingReview(true);
+      await api.post(`/projects/${projectId}/files/${reviewingFile.id}/review`, {
+        decision,
+        comment: reviewComment,
+      });
+      setReviewingFile(null);
+      setReviewComment('');
+      refreshProject();
+    } catch (err: unknown) {
+      alert(getApiErrorMessage(err, `Failed to ${decision.toLowerCase()} file`));
+    } finally {
+      setSavingReview(false);
     }
   };
 
@@ -625,14 +662,14 @@ export const ProjectDetailView: React.FC<Props> = ({
             )}
           </div>
 
-          {/* Site-Wide Phase Management */}
+          {/* Engineering Phase Management */}
           <div className="workbench-panel bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5 shadow-xl">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <div>
-                <h3 className="font-semibold text-white text-base">Master Site Phases</h3>
-                <p className="text-xs text-slate-400">High-level site preparation, environmental clearance, and commissioning</p>
+                <h3 className="font-semibold text-white text-base">Engineering Phases</h3>
+                <p className="text-xs text-slate-400">Track concept design, calculations, modeling, and sheeting.</p>
               </div>
-              {canEdit && (
+              {canEdit && availablePhaseNames.length > 0 && (
                 <button
                   onClick={() => setShowPhaseModal(true)}
                   className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition font-medium"
@@ -693,15 +730,6 @@ export const ProjectDetailView: React.FC<Props> = ({
                         ))}
                       </div>
 
-                      {canManage && (
-                        <button
-                          onClick={() => handleDeletePhase(phase.id)}
-                          title="Delete Phase"
-                          className="p-1 hover:bg-slate-800 text-slate-500 hover:text-red-400 rounded-lg transition"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -723,7 +751,7 @@ export const ProjectDetailView: React.FC<Props> = ({
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                   <div className="flex items-center gap-2 text-[10px] text-slate-400 bg-slate-950 p-1.5 rounded-lg border border-slate-800">
                     <span className="font-semibold text-slate-300">Visible to:</span>
-                    {(['ADMIN', 'MANAGER', 'EDITOR', 'VIEWER'] as ProjectRole[]).map((r) => (
+                    {(['MANAGER', 'EDITOR', 'VIEWER'] as ProjectRole[]).map((r) => (
                       <label key={r} className="flex items-center gap-1 cursor-pointer hover:text-white">
                         <input
                           type="checkbox"
@@ -752,7 +780,7 @@ export const ProjectDetailView: React.FC<Props> = ({
             ) : (
               <div className="space-y-2">
                 {project.files.map((file) => {
-                  const allowedRolesList: ProjectRole[] = file.allowedRoles || ['ADMIN'];
+                  const allowedRolesList: ProjectRole[] = file.allowedRoles || ['MANAGER'];
                   const fileExtension = file.fileName.split('.').pop()?.toLowerCase() || '';
                   const canPreview = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'txt', 'csv'].includes(fileExtension);
 
@@ -768,6 +796,17 @@ export const ProjectDetailView: React.FC<Props> = ({
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="text-[10px] text-slate-500 uppercase font-semibold">{file.fileType}</span>
                             <span className="text-[10px] text-slate-600">•</span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded border font-semibold ${
+                              file.reviewStatus === 'APPROVED'
+                                ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200'
+                                : file.reviewStatus === 'REJECTED'
+                                  ? 'border-rose-400/20 bg-rose-400/10 text-rose-200'
+                                  : file.reviewStatus === 'PENDING_REVIEW'
+                                    ? 'border-violet-400/20 bg-violet-400/10 text-violet-200'
+                                    : 'border-slate-500/20 bg-slate-500/10 text-slate-300'
+                            }`}>
+                              {(file.reviewStatus || 'APPROVED').replace('_', ' ')}
+                            </span>
                             <div className="flex items-center gap-1">
                               {allowedRolesList.map((role) => (
                                 <span
@@ -779,10 +818,32 @@ export const ProjectDetailView: React.FC<Props> = ({
                               ))}
                             </div>
                           </div>
+                          {file.reviewStatus === 'REJECTED' && file.reviewComment && (
+                            <p className="mt-1 max-w-xl text-[11px] text-rose-200/90">Changes requested: {file.reviewComment}</p>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {canEdit && file.uploadedByUserId === currentUserId &&
+                          (file.reviewStatus === 'DRAFT' || file.reviewStatus === 'REJECTED') && (
+                            <button
+                              type="button"
+                              onClick={() => handleSubmitFileForReview(file)}
+                              className="rounded-lg border border-violet-400/25 bg-violet-400/10 px-2.5 py-1.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-400/20"
+                            >
+                              Submit for review
+                            </button>
+                          )}
+                        {canManage && file.reviewStatus === 'PENDING_REVIEW' && (
+                          <button
+                            type="button"
+                            onClick={() => { setReviewingFile(file); setReviewComment(''); }}
+                            className="rounded-lg border border-violet-400/25 bg-violet-400/10 px-2.5 py-1.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-400/20"
+                          >
+                            Review
+                          </button>
+                        )}
                         {canPreview && (
                           <button
                             type="button"
@@ -831,7 +892,7 @@ export const ProjectDetailView: React.FC<Props> = ({
               </div>
             )}
           </div>
-          <ProjectActivityLog projectId={projectId} />
+          {user?.role !== 'CLIENT' && <ProjectActivityLog projectId={projectId} />}
         </div>
 
         {/* Right Sidebar Column (Team Access & RBAC) */}
@@ -869,7 +930,7 @@ export const ProjectDetailView: React.FC<Props> = ({
                       {canManage && (
                         <>
                           <button
-                            onClick={() => handleEditMemberRole(m.user?.id || m.userId || '', m.user?.name || 'User', m.role)}
+                            onClick={() => handleEditMemberRole(m.user?.id || m.userId || '', m.user?.name || 'User', m.role, m.user?.role || 'TEAM_MEMBER')}
                             title="Edit Member Role"
                             className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
                           >
@@ -895,6 +956,7 @@ export const ProjectDetailView: React.FC<Props> = ({
 
       {/* Create Building Package Modal */}
       {showBuildingModal && (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -985,10 +1047,12 @@ export const ProjectDetailView: React.FC<Props> = ({
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Edit Project Modal */}
       {showEditProjectModal && (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -1060,10 +1124,12 @@ export const ProjectDetailView: React.FC<Props> = ({
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Edit File Permission Roles Modal */}
       {editingFile && (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -1075,7 +1141,7 @@ export const ProjectDetailView: React.FC<Props> = ({
             </p>
 
             <div className="space-y-2 py-2 border-y border-slate-800">
-              {(['ADMIN', 'MANAGER', 'EDITOR', 'VIEWER'] as ProjectRole[]).map((role) => (
+              {(['MANAGER', 'EDITOR', 'VIEWER'] as ProjectRole[]).map((role) => (
                 <label key={role} className="flex items-center justify-between p-2 rounded bg-slate-950 border border-slate-800 cursor-pointer hover:border-slate-700">
                   <span className="text-xs font-semibold text-white">{role}</span>
                   <input
@@ -1107,22 +1173,77 @@ export const ProjectDetailView: React.FC<Props> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
+      )}
+
+      {reviewingFile && (
+        <ModalPortal>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
+            <div>
+              <h3 className="text-base font-bold text-white">Review document</h3>
+              <p className="mt-1 break-all text-xs text-slate-400">{reviewingFile.fileName}</p>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-400">
+                Reason for changes <span className="text-slate-500">(required when requesting changes)</span>
+              </label>
+              <textarea
+                rows={3}
+                maxLength={2000}
+                value={reviewComment}
+                onChange={(event) => setReviewComment(event.target.value)}
+                placeholder="Tell the uploader what needs to be revised."
+                className="w-full resize-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setReviewingFile(null); setReviewComment(''); }}
+                disabled={savingReview}
+                className="rounded-lg bg-slate-800 px-3.5 py-2 text-xs text-slate-300 transition hover:bg-slate-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReviewDecision('REJECTED')}
+                disabled={savingReview}
+                className="rounded-lg border border-rose-400/25 bg-rose-400/10 px-3.5 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/20 disabled:opacity-50"
+              >
+                {savingReview ? 'Saving…' : 'Request changes'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReviewDecision('APPROVED')}
+                disabled={savingReview}
+                className="rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3.5 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:opacity-50"
+              >
+                {savingReview ? 'Saving…' : 'Approve'}
+              </button>
+            </div>
+          </div>
+        </div>
+        </ModalPortal>
       )}
 
       {/* Add Phase Modal */}
       {showPhaseModal && (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4">
             <h3 className="text-base font-bold text-white">Add Phase</h3>
             <form onSubmit={handleCreatePhase} className="space-y-3">
-              <input
-                type="text"
+              <select
                 required
-                placeholder="Phase name (e.g. Earthworks & Piling)"
                 value={newPhaseName}
                 onChange={(e) => setNewPhaseName(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-              />
+              >
+                <option value="" disabled>Select an engineering phase</option>
+                {availablePhaseNames.map((phaseName) => <option key={phaseName} value={phaseName}>{phaseName}</option>)}
+              </select>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -1141,10 +1262,12 @@ export const ProjectDetailView: React.FC<Props> = ({
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Assign / Edit Role Modal */}
       {showMemberModal && (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4">
             <h3 className="text-base font-bold text-white">
@@ -1162,12 +1285,16 @@ export const ProjectDetailView: React.FC<Props> = ({
                 ) : (
                   <select
                     value={memberUserId}
-                    onChange={(e) => setMemberUserId(e.target.value)}
+                    onChange={(e) => {
+                      const selectedUser = usersList.find((availableUser) => availableUser.id === e.target.value);
+                      setMemberUserId(e.target.value);
+                      if (selectedUser?.role === 'CLIENT') setMemberRole('VIEWER');
+                    }}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                   >
                     {usersList.map((u) => (
                       <option key={u.id} value={u.id}>
-                        {u.name} ({u.email})
+                        {u.name} ({u.email}) · {u.role === 'CLIENT' ? 'Client' : 'Team member'}
                       </option>
                     ))}
                   </select>
@@ -1177,14 +1304,16 @@ export const ProjectDetailView: React.FC<Props> = ({
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">Role Permission</label>
                 <select
-                  value={memberRole}
+                  value={selectedUserIsClient ? 'VIEWER' : memberRole}
                   onChange={(e) => setMemberRole(e.target.value as ProjectRole)}
+                  disabled={selectedUserIsClient}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                 >
                   <option value="VIEWER">VIEWER (Read-Only)</option>
                   <option value="EDITOR">EDITOR (Upload & Phase Control)</option>
                   <option value="MANAGER">MANAGER (Full Project Control)</option>
                 </select>
+                {selectedUserIsClient && <p className="mt-1 text-[11px] text-slate-500">Client accounts are always read-only.</p>}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
@@ -1209,9 +1338,11 @@ export const ProjectDetailView: React.FC<Props> = ({
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {filePreview && (
+        <ModalPortal>
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6"
           role="dialog"
@@ -1260,6 +1391,7 @@ export const ProjectDetailView: React.FC<Props> = ({
             </div>
           </section>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

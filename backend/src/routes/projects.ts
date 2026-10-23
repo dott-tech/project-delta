@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { ProjectRole, PhaseStatus, FileType } from '@prisma/client';
+import { ProjectRole, PhaseStatus, FileType, FileReviewStatus } from '@prisma/client';
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
@@ -120,7 +120,7 @@ const getEffectiveProjectRole = async (projectId: string, userId: string): Promi
 const canAccessFile = (
   userGlobalRole: string,
   userProjectRole?: ProjectRole | null,
-  allowedRoles: ProjectRole[] = ['ADMIN']
+  allowedRoles: ProjectRole[] = ['MANAGER']
 ): boolean => {
   // 1. System ADMINs bypass file restrictions
   if (userGlobalRole === 'ADMIN') return true;
@@ -132,9 +132,6 @@ const canAccessFile = (
   if (allowedRoles.includes(effectiveRole)) return true;
 
   // 4. Role Hierarchy inheritances
-  if (effectiveRole === 'ADMIN' && (allowedRoles.includes('MANAGER') || allowedRoles.includes('EDITOR') || allowedRoles.includes('VIEWER'))) {
-    return true;
-  }
   if (effectiveRole === 'MANAGER' && (allowedRoles.includes('EDITOR') || allowedRoles.includes('VIEWER'))) {
     return true;
   }
@@ -145,12 +142,36 @@ const canAccessFile = (
   return false;
 };
 
+const canViewProjectFile = (
+  globalRole: string,
+  projectRole: ProjectRole | null,
+  file: { reviewStatus: FileReviewStatus; allowedRoles: ProjectRole[]; uploadedByUserId: string | null },
+  userId: string
+): boolean => {
+  if (globalRole === 'ADMIN') return true;
+
+  // Clients only ever see approved files and are evaluated as viewers, regardless
+  // of any stale or manually modified project membership row.
+  if (globalRole === 'CLIENT') {
+    return file.reviewStatus === 'APPROVED' && canAccessFile('CLIENT', 'VIEWER', file.allowedRoles);
+  }
+
+  if (file.reviewStatus !== 'APPROVED') {
+    return projectRole === 'MANAGER' || (
+      globalRole === 'TEAM_MEMBER' && projectRole === 'EDITOR' && file.uploadedByUserId === userId
+    );
+  }
+
+  return canDownloadProjectFiles(globalRole, projectRole) ||
+    canAccessFile(globalRole, projectRole, file.allowedRoles);
+};
+
 /**
  * Standard Prisma query include structure for parent & nested sub-projects
  */
 const fullProjectInclude = {
   phases: { orderBy: { order: 'asc' as const } },
-  members: { include: { user: { select: { id: true, name: true, email: true } } } },
+  members: { include: { user: { select: { id: true, name: true, email: true, role: true } } } },
   files: true,
   createdBy: { select: { id: true, email: true, name: true } },
   updatedBy: { select: { id: true, email: true, name: true } },
@@ -208,17 +229,19 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
       const userMember = p.members.find((m) => m.userId === user.id);
       const projectRole = userMember?.role || 'VIEWER';
 
+      const canDownload = canDownloadProjectFiles(userRole, userMember?.role ?? null);
       const filteredFiles = p.files.filter((f) =>
-        canDownloadProjectFiles(userRole, userMember?.role ?? null) || canAccessFile(userRole, projectRole, (f as any).allowedRoles)
-      ).map((f) => ({ ...f, fileUrl: canDownloadProjectFiles(userRole, userMember?.role ?? null) ? f.fileUrl : '' }));
+        canViewProjectFile(userRole, userMember?.role ?? null, f, getUserId(req) || '')
+      ).map((f) => ({ ...f, fileUrl: canDownload ? f.fileUrl : '' }));
 
       const sanitizedSubProjects = p.subProjects.map((sub) => {
         const subMember = sub.members.find((m) => m.userId === user.id) || userMember;
+        const subCanDownload = canDownloadProjectFiles(userRole, subMember?.role ?? null);
         return {
           ...sub,
           files: sub.files.filter((f) =>
-            canDownloadProjectFiles(userRole, subMember?.role ?? null) || canAccessFile(userRole, subMember?.role || 'VIEWER', (f as any).allowedRoles)
-          ).map((f) => ({ ...f, fileUrl: canDownloadProjectFiles(userRole, subMember?.role ?? null) ? f.fileUrl : '' })),
+            canViewProjectFile(userRole, subMember?.role ?? null, f, getUserId(req) || '')
+          ).map((f) => ({ ...f, fileUrl: subCanDownload ? f.fileUrl : '' })),
         };
       });
 
@@ -264,6 +287,10 @@ router.get(
 
       if (!canDownloadProjectFiles(user.role, effectiveRole)) {
         return res.status(403).json({ error: 'Downloads are available to admins and assigned editor team members only' });
+      }
+
+      if (file.reviewStatus !== 'APPROVED' && file.uploadedByUserId !== getUserId(req) && user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Unapproved drafts can only be downloaded by their uploader or a system admin' });
       }
 
       let downloadUrl = file.fileUrl;
@@ -313,7 +340,7 @@ router.get(
       if (project.isArchived && user.role !== 'ADMIN' && !projectRole) {
         return res.status(403).json({ error: 'Access denied. This project is archived.' });
       }
-      if (!canAccessFile(user.role, projectRole, file.allowedRoles)) {
+      if (!canViewProjectFile(user.role, projectRole, file, userId)) {
         return res.status(403).json({ error: 'You do not have permission to view this file' });
       }
 
@@ -407,7 +434,7 @@ router.get(
 router.get('/:id/available-users', authenticateToken, requireProjectRole('MANAGER'), async (_req, res) => {
   try {
     const users = await prisma.user.findMany({
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, role: true },
       orderBy: { name: 'asc' },
     });
     return res.json(users);
@@ -417,21 +444,27 @@ router.get('/:id/available-users', authenticateToken, requireProjectRole('MANAGE
   }
 });
 
-router.get('/:id/activity', authenticateToken, requireProjectRole('VIEWER'), async (req: Request, res: Response) => {
-  try {
-    const projectId = String(req.params.id);
-    const exists = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
-    if (!exists) return res.status(404).json({ error: 'Project not found' });
-    const activities = await prisma.projectActivity.findMany({
-      where: { projectId }, orderBy: { createdAt: 'desc' }, take: 100,
-      include: { user: { select: { id: true, name: true, email: true } } },
-    });
-    return res.json(activities);
-  } catch (error) {
-    console.error('Failed to load project activity:', error);
-    return res.status(500).json({ error: 'Failed to load project activity' });
+router.get(
+  '/:id/activity',
+  authenticateToken,
+  requireRole(['ADMIN', 'TEAM_MEMBER']),
+  requireProjectRole('VIEWER'),
+  async (req: Request, res: Response) => {
+    try {
+      const projectId = String(req.params.id);
+      const exists = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
+      if (!exists) return res.status(404).json({ error: 'Project not found' });
+      const activities = await prisma.projectActivity.findMany({
+        where: { projectId }, orderBy: { createdAt: 'desc' }, take: 100,
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
+      return res.json(activities);
+    } catch (error) {
+      console.error('Failed to load project activity:', error);
+      return res.status(500).json({ error: 'Failed to load project activity' });
+    }
   }
-});
+);
 
 router.get(
   '/:id',
@@ -476,7 +509,7 @@ router.get(
       const canDownload = canDownloadProjectFiles(user.role, effectiveRole);
 
       const accessibleFiles = project.files.filter((f) =>
-        canDownload || canAccessFile(user.role, effectiveRole || userProjectRole, (f as any).allowedRoles)
+        canViewProjectFile(user.role, effectiveRole || userProjectRole, f, getUserId(req) || '')
       );
 
       const filesWithPresignedUrls = await Promise.all(
@@ -506,7 +539,7 @@ router.get(
         const subRole = await getEffectiveProjectRole(subProject.id, getUserId(req) || '');
         const subCanDownload = canDownloadProjectFiles(user.role, subRole);
         const visibleFiles = subProject.files.filter((file) =>
-          subCanDownload || canAccessFile(user.role, subRole, (file as any).allowedRoles)
+          canViewProjectFile(user.role, subRole, file, getUserId(req) || '')
         ).map((file) => ({
           ...file,
           fileUrl: canDownloadProjectFiles(user.role, subRole) ? file.fileUrl : '',
@@ -578,6 +611,12 @@ router.post(
               userId: String(currentUserId),
               role: 'MANAGER',
             },
+          },
+          phases: {
+            create: ENGINEERING_PHASES.map((name, index) => ({
+              name,
+              order: index + 1,
+            })),
           },
         },
         include: fullProjectInclude,
@@ -719,10 +758,17 @@ router.post(
         Array.isArray(allowedRoles) && allowedRoles.length > 0
           ? allowedRoles
           : ['VIEWER' as ProjectRole];
-      if (validAllowedRoles.some((role) => !['ADMIN', 'MANAGER', 'EDITOR', 'VIEWER'].includes(role))) {
+      if (validAllowedRoles.some((role) => !['MANAGER', 'EDITOR', 'VIEWER'].includes(role))) {
         await discardUploadedObject(s3Key);
         pendingObjectKey = null;
         return res.status(400).json({ error: 'allowedRoles contains an invalid project role' });
+      }
+
+      const uploaderId = getUserId(req);
+      if (!uploaderId) {
+        await discardUploadedObject(s3Key);
+        pendingObjectKey = null;
+        return res.status(401).json({ error: 'Uploader identity is missing' });
       }
 
       const fileRecord = await prisma.projectFile.create({
@@ -733,11 +779,13 @@ router.post(
           fileUrl: String(fileUrl),
           fileSize: fileSize !== undefined ? Number(fileSize) : null,
           allowedRoles: validAllowedRoles,
+          reviewStatus: 'DRAFT',
+          uploadedByUserId: uploaderId,
         } as any,
       });
       pendingObjectKey = null;
 
-      await logProjectActivity(projectId, req, 'file.uploaded', `Uploaded “${fileRecord.fileName}”`);
+      await logProjectActivity(projectId, req, 'file.draft_created', `Uploaded “${fileRecord.fileName}” as a draft`);
 
       return res.status(201).json(fileRecord);
     } catch (error: any) {
@@ -746,6 +794,99 @@ router.post(
       return res.status(500).json({
         error: 'Failed to save file record', 
       });
+    }
+  }
+);
+
+// Submit an uploaded draft (or a rejected file) for manager/admin review.
+router.post(
+  '/:projectId/files/:fileId/submit-review',
+  authenticateToken,
+  requireProjectRole('EDITOR'),
+  async (req: Request, res: Response) => {
+    try {
+      const projectId = String(req.params.projectId);
+      const fileId = String(req.params.fileId);
+      const userId = getUserId(req);
+      const file = await prisma.projectFile.findFirst({ where: { id: fileId, projectId } });
+      if (!file) return res.status(404).json({ error: 'File not found in this project' });
+      if (file.uploadedByUserId !== userId && (req as any).user?.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Only the uploader or a system admin can submit this file for review' });
+      }
+      if (file.reviewStatus !== 'DRAFT' && file.reviewStatus !== 'REJECTED') {
+        return res.status(409).json({ error: 'Only draft or rejected files can be submitted for review' });
+      }
+
+      const submitted = await prisma.projectFile.updateMany({
+        where: { id: fileId, projectId, reviewStatus: { in: ['DRAFT', 'REJECTED'] } },
+        data: {
+          reviewStatus: 'PENDING_REVIEW',
+          reviewedByUserId: null,
+          reviewedAt: null,
+          reviewComment: null,
+        },
+      });
+      if (submitted.count !== 1) return res.status(409).json({ error: 'This file has already changed review state' });
+      const updatedFile = await prisma.projectFile.findUnique({ where: { id: fileId } });
+      await logProjectActivity(projectId, req, 'file.submitted_for_review', `Submitted “${file.fileName}” for review`);
+      return res.json(updatedFile);
+    } catch (error) {
+      console.error('Failed to submit file for review:', error);
+      return res.status(500).json({ error: 'Failed to submit file for review' });
+    }
+  }
+);
+
+// Only project managers and global admins can approve or reject submitted files.
+router.post(
+  '/:projectId/files/:fileId/review',
+  authenticateToken,
+  requireProjectRole('MANAGER'),
+  async (req: Request, res: Response) => {
+    try {
+      const projectId = String(req.params.projectId);
+      const fileId = String(req.params.fileId);
+      const decision = req.body?.decision;
+      const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : '';
+      if (decision !== 'APPROVED' && decision !== 'REJECTED') {
+        return res.status(400).json({ error: 'Decision must be APPROVED or REJECTED' });
+      }
+      if (decision === 'REJECTED' && !comment) {
+        return res.status(400).json({ error: 'Add a reason when rejecting a file' });
+      }
+      if (comment.length > 2000) {
+        return res.status(400).json({ error: 'Review comments must be 2,000 characters or fewer' });
+      }
+
+      const file = await prisma.projectFile.findFirst({ where: { id: fileId, projectId } });
+      if (!file) return res.status(404).json({ error: 'File not found in this project' });
+      if (file.reviewStatus !== 'PENDING_REVIEW') {
+        return res.status(409).json({ error: 'Only files pending review can be approved or rejected' });
+      }
+      const reviewerId = getUserId(req);
+      if (!reviewerId) return res.status(401).json({ error: 'Reviewer identity is missing' });
+
+      const reviewed = await prisma.projectFile.updateMany({
+        where: { id: fileId, projectId, reviewStatus: 'PENDING_REVIEW' },
+        data: {
+          reviewStatus: decision as FileReviewStatus,
+          reviewedByUserId: reviewerId,
+          reviewedAt: new Date(),
+          reviewComment: decision === 'REJECTED' ? comment : null,
+        },
+      });
+      if (reviewed.count !== 1) return res.status(409).json({ error: 'This file has already been reviewed' });
+      const updatedFile = await prisma.projectFile.findUnique({ where: { id: fileId } });
+      await logProjectActivity(
+        projectId,
+        req,
+        decision === 'APPROVED' ? 'file.approved' : 'file.rejected',
+        `${decision === 'APPROVED' ? 'Approved' : 'Rejected'} “${file.fileName}”`
+      );
+      return res.json(updatedFile);
+    } catch (error) {
+      console.error('Failed to review file:', error);
+      return res.status(500).json({ error: 'Failed to review file' });
     }
   }
 );
@@ -767,7 +908,7 @@ router.patch(
       }
 
       const projectId = String(req.params.projectId);
-      if (allowedRoles.some((role: unknown) => !['ADMIN', 'MANAGER', 'EDITOR', 'VIEWER'].includes(String(role)))) {
+      if (allowedRoles.some((role: unknown) => !['MANAGER', 'EDITOR', 'VIEWER'].includes(String(role)))) {
         return res.status(400).json({ error: 'allowedRoles contains an invalid project role' });
       }
       const existingFile = await prisma.projectFile.findFirst({ where: { id: fileId, projectId } });
@@ -923,6 +1064,7 @@ router.delete(
 // ============================================================================
 // 10. PROJECT PHASE MANAGEMENT (Create, Update, Delete)
 // ============================================================================
+const ENGINEERING_PHASES = ['Concept Design', 'Design Calculation', 'Modeling', 'Sheeting'] as const;
 
 // Create Phase
 router.post(
@@ -935,9 +1077,12 @@ router.post(
       const projectId = Array.isArray(rawId) ? rawId[0] : String(rawId);
       const { name, order, status, progressPercent, startDate, endDate, notes } = req.body;
 
-      if (!name) {
-        return res.status(400).json({ error: 'Phase name is required' });
+      if (typeof name !== 'string' || !ENGINEERING_PHASES.includes(name as typeof ENGINEERING_PHASES[number])) {
+        return res.status(400).json({ error: `Phase must be one of: ${ENGINEERING_PHASES.join(', ')}` });
       }
+
+      const existingPhase = await prisma.projectPhase.findFirst({ where: { projectId, name } });
+      if (existingPhase) return res.status(409).json({ error: `${name} already exists on this project` });
 
       let phaseOrder = order;
       if (phaseOrder === undefined) {
@@ -980,7 +1125,6 @@ router.patch(
 
       const updateData: any = {};
 
-      if (name !== undefined) updateData.name = String(name);
       if (order !== undefined) updateData.order = Number(order);
       if (status !== undefined) updateData.status = status as PhaseStatus;
       if (notes !== undefined) updateData.notes = notes;
@@ -1001,6 +1145,18 @@ router.patch(
 
       const existingPhase = await prisma.projectPhase.findFirst({ where: { id: phaseId, projectId: String(req.params.id) } });
       if (!existingPhase) return res.status(404).json({ error: 'Phase not found in this project' });
+
+      if (name !== undefined) {
+        if (typeof name !== 'string' || !ENGINEERING_PHASES.includes(name as typeof ENGINEERING_PHASES[number])) {
+          return res.status(400).json({ error: `Phase must be one of: ${ENGINEERING_PHASES.join(', ')}` });
+        }
+        const duplicate = await prisma.projectPhase.findFirst({
+          where: { projectId: existingPhase.projectId, name, id: { not: phaseId } },
+        });
+        if (duplicate) return res.status(409).json({ error: `${name} already exists on this project` });
+        updateData.name = name;
+      }
+
       const updatedPhase = await prisma.projectPhase.update({
         where: { id: phaseId },
         data: updateData,
@@ -1029,9 +1185,7 @@ router.delete(
 
       const phase = await prisma.projectPhase.findFirst({ where: { id: phaseId, projectId: String(req.params.id) } });
       if (!phase) return res.status(404).json({ error: 'Phase not found in this project' });
-      await prisma.projectPhase.delete({ where: { id: phaseId } });
-      await logProjectActivity(String(req.params.id), req, 'phase.deleted', `Deleted phase “${phase.name}”`);
-      return res.json({ message: 'Phase deleted successfully' });
+      return res.status(409).json({ error: 'Standard project phases cannot be deleted' });
     } catch (error: any) {
       console.error('Error deleting phase:', error);
       return res.status(500).json({ error: 'Failed to delete phase' });
@@ -1057,11 +1211,14 @@ router.post(
       if (!userId || !role) {
         return res.status(400).json({ error: 'userId and role are required' });
       }
-      if (!['ADMIN', 'MANAGER', 'EDITOR', 'VIEWER'].includes(role)) {
+      if (!['MANAGER', 'EDITOR', 'VIEWER'].includes(role)) {
         return res.status(400).json({ error: 'Invalid project role' });
       }
-      const targetUser = await prisma.user.findUnique({ where: { id: String(userId) }, select: { id: true } });
+      const targetUser = await prisma.user.findUnique({ where: { id: String(userId) }, select: { id: true, role: true } });
       if (!targetUser) return res.status(404).json({ error: 'User not found' });
+      if (targetUser.role === 'CLIENT' && role !== 'VIEWER') {
+        return res.status(400).json({ error: 'Client accounts can only have the VIEWER project role' });
+      }
 
       const member = await prisma.projectMember.upsert({
         where: {

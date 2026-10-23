@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { ProjectFilters } from './ProjectFilters';
 import { EditProjectModal } from './EditProjectModal';
+import { ModalPortal } from './ModalPortal';
 import { PhaseTracker } from './PhaseTracker';
 import type { Project } from '../types/project';
 import { getApiErrorMessage } from '../utils/apiError';
@@ -169,31 +170,55 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   return (
     <div className="dashboard-page space-y-7">
       <section className="portfolio-hero relative overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/50 p-5 shadow-2xl shadow-black/20 sm:p-7">
-        <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-28 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="hero-copy max-w-2xl">
-            <div className="hero-kicker mb-3 inline-flex items-center gap-2 rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-300">
-              <Folder className="h-3.5 w-3.5" /> Engineering portfolio
+        <div className="dashboard-hero-layout">
+          <div className="dashboard-hero-copy">
+            <div className="hero-kicker inline-flex items-center gap-2 border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-300">
+              <Folder className="h-3.5 w-3.5" /> Project portfolio <span className="hero-kicker-index">/ 01</span>
             </div>
-            <h2 className="hero-title text-2xl font-semibold tracking-tight text-white sm:text-3xl">Make big things <span>happen.</span></h2>
-            <p className="hero-description mt-2 max-w-xl text-sm leading-6 text-slate-400">Your projects, people, and progress—together in one place.</p>
+            <h2 className="hero-title">Engineering,<br /><span>in motion.</span></h2>
+            <p className="hero-description">A considered view of active sites, structures, and the work moving them forward.</p>
+            {canCreate && (
+              <button onClick={() => setShowModal(true)} className="hero-action inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
+                <Plus className="h-4 w-4" /> Create a project
+              </button>
+            )}
           </div>
-          {canCreate && (
-            <button onClick={() => setShowModal(true)} className="hero-action inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
-              <Plus className="h-4 w-4" /> New project
-            </button>
-          )}
-        </div>
-        <div className="hero-metrics relative mt-7 grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <PortfolioMetric icon={<Folder className="h-4 w-4" />} label="Active projects" value={projects.length} detail="Top-level sites" tone="blue" />
-          <PortfolioMetric icon={<Layers3 className="h-4 w-4" />} label="Building packages" value={portfolio.packageCount} detail="Across your portfolio" tone="violet" />
-          <PortfolioMetric icon={<CircleAlert className="h-4 w-4" />} label="Needs attention" value={portfolio.needsAttention} detail={`${portfolio.blocked} blocked · ${portfolio.overdue} overdue`} tone={portfolio.needsAttention ? 'rose' : 'emerald'} />
-          <PortfolioMetric icon={<TrendingUp className="h-4 w-4" />} label="Phase progress" value={`${portfolio.progress}%`} detail={`${portfolio.phaseCount} tracked phases`} tone="emerald" progress={portfolio.progress} />
+          <div className="dashboard-hero-art" aria-hidden="true">
+            <div className="dashboard-drawing-label"><span>STRUCTURAL STUDY</span><span>SH / 01</span></div>
+            <svg viewBox="0 0 340 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M57 202V105L170 42L283 105V202H57Z" />
+              <path d="M83 202V116L170 68L257 116V202M111 202V130L170 98L229 130V202M57 105H283M83 116H257M111 130H229" />
+              <path d="M57 145H283M57 174H283M170 42V202M27 202H313M41 214H299" />
+              <path className="drawing-accent" d="M170 42L283 105M170 68L257 116M111 130L229 202" />
+              <circle cx="170" cy="42" r="4" />
+              <circle cx="57" cy="105" r="3" />
+              <circle cx="283" cy="105" r="3" />
+              <path className="drawing-measure" d="M35 105V202M31 105H39M31 202H39M305 105V202M301 105H309M301 202H309" />
+            </svg>
+            <div className="dashboard-drawing-caption">FRAME / ELEVATION</div>
+          </div>
+          <section className="dashboard-summary" aria-label="Portfolio status and metrics">
+            <div className="dashboard-section-heading">
+              <div><span className="dashboard-section-index">01</span><h3>Portfolio overview</h3></div>
+              <span>Current workload</span>
+            </div>
+            <div className="dashboard-metrics">
+              <PortfolioMetric icon={<Folder className="h-4 w-4" />} label="Active projects" value={projects.length} detail="Top-level sites" tone="blue" />
+              <PortfolioMetric icon={<Layers3 className="h-4 w-4" />} label="Building packages" value={portfolio.packageCount} detail="Across your portfolio" tone="violet" />
+              <PortfolioMetric icon={<CircleAlert className="h-4 w-4" />} label="Needs attention" value={portfolio.needsAttention} detail={`${portfolio.blocked} blocked · ${portfolio.overdue} overdue`} tone={portfolio.needsAttention ? 'rose' : 'emerald'} />
+              <PortfolioMetric icon={<TrendingUp className="h-4 w-4" />} label="Phase progress" value={`${portfolio.progress}%`} detail={`${portfolio.phaseCount} tracked phases`} tone="emerald" progress={portfolio.progress} />
+            </div>
+          </section>
         </div>
       </section>
 
       <>
           {loadError && <div role="alert" className="flex flex-col gap-3 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>{loadError}</span><button onClick={fetchProjects} className="rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs font-semibold hover:bg-rose-500/10">Try again</button></div>}
+          <section className="project-register">
+          <div className="dashboard-section-heading project-register-heading">
+            <div><span className="dashboard-section-index">02</span><h3>Project register</h3></div>
+            <span>Browse and open a project workspace</span>
+          </div>
           <ProjectFilters
             search={search}
             onSearchChange={setSearch}
@@ -210,7 +235,6 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             }}
           />
 
-          {/* Projects Grid */}
           {loading ? (
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading projects">
               {Array.from({ length: 3 }, (_, index) => <div key={index} className="h-64 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/70" />)}
@@ -226,12 +250,11 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             </div>
           ) : (
             <>
-            <div className="mb-3 flex items-center justify-between text-xs text-slate-500">
-              <span>{filteredProjects.length} {filteredProjects.length === 1 ? 'project' : 'projects'}</span>
-              <span className="hidden sm:inline">Select a project to open its delivery workspace</span>
+            <div className="portfolio-results-heading mb-3 flex items-center justify-between text-xs text-slate-500">
+              <span className="font-semibold text-slate-300">Showing <span className="ml-1 font-normal text-slate-500">{filteredProjects.length} {filteredProjects.length === 1 ? 'project' : 'projects'}</span></span>
             </div>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {filteredProjects.map((project) => {
+              {filteredProjects.map((project, projectIndex) => {
                 const hasSubProjects = project.subProjects && project.subProjects.length > 0;
                 const isExpanded = !!expandedProjects[project.id];
 
@@ -254,6 +277,7 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                     aria-label={`Open ${project.title}`}
                     className="portfolio-card group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-lg shadow-black/10 transition duration-200 hover:-translate-y-0.5 hover:border-blue-500/40 hover:shadow-xl hover:shadow-blue-950/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                   >
+                    <span aria-hidden="true" className="project-card-index">{String(projectIndex + 1).padStart(2, '0')}</span>
                     <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-400/40 to-transparent opacity-0 transition group-hover:opacity-100" />
                     <div className="space-y-3">
                       {/* Top Badges & Action Buttons */}
@@ -379,10 +403,12 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             </div>
             </>
           )}
+          </section>
       </>
 
       {/* Create Project Modal */}
       {showModal && (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:p-6">
             <h2 className="text-lg font-bold text-white mb-4">Create Engineering Project</h2>
@@ -482,6 +508,7 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Edit Project Modal */}
@@ -510,10 +537,10 @@ type PortfolioMetricProps = {
 
 const PortfolioMetric: React.FC<PortfolioMetricProps> = ({ icon, label, value, detail, tone, progress }) => {
   const tones = {
-    blue: 'border-blue-400/20 bg-blue-400/10 text-blue-300',
-    violet: 'border-violet-400/20 bg-violet-400/10 text-violet-300',
+    blue: 'border-lime-400/20 bg-lime-400/10 text-lime-300',
+    violet: 'border-lime-400/20 bg-lime-400/10 text-lime-300',
     rose: 'border-rose-400/20 bg-rose-400/10 text-rose-300',
-    emerald: 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300',
+    emerald: 'border-lime-400/20 bg-lime-400/10 text-lime-300',
   };
   return (
     <article className="min-w-0 rounded-2xl border border-slate-700/70 bg-slate-950/55 p-3.5 backdrop-blur-sm sm:p-4">
@@ -523,10 +550,10 @@ const PortfolioMetric: React.FC<PortfolioMetricProps> = ({ icon, label, value, d
       </div>
       <div className="mt-3 flex items-end justify-between gap-2">
         <strong className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{value}</strong>
-        {progress !== undefined && <span className="pb-1 text-[10px] font-semibold text-emerald-300">portfolio</span>}
+        {progress !== undefined && <span className="pb-1 text-[10px] font-semibold text-lime-300">portfolio</span>}
       </div>
       <p className="mt-1 truncate text-[10px] text-slate-500 sm:text-[11px]">{detail}</p>
-      {progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
+      {progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-lime-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
     </article>
   );
 };

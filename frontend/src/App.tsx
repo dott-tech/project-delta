@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from './context/useAuth';
 import { Navbar } from './components/Navbar';
 import { ProjectsDashboard } from './components/ProjectsDashboard';
@@ -11,17 +11,62 @@ import { Login } from './components/login';
 type NavigationTarget = 'projects' | 'admin' | 'archive';
 type ViewState = NavigationTarget | 'project-detail';
 
+interface AppRoute {
+  currentView: ViewState;
+  selectedProjectId: string | null;
+  projectHistory: string[];
+}
+
+const readRouteFromUrl = (): AppRoute => {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view');
+
+  if (view === 'admin' || view === 'archive') {
+    return { currentView: view, selectedProjectId: null, projectHistory: [] };
+  }
+
+  if (view === 'project-detail' && params.get('projectId')) {
+    return {
+      currentView: 'project-detail',
+      selectedProjectId: params.get('projectId'),
+      projectHistory: params.getAll('parent'),
+    };
+  }
+
+  return { currentView: 'projects', selectedProjectId: null, projectHistory: [] };
+};
+
+const writeRouteToUrl = (route: AppRoute) => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('view');
+  url.searchParams.delete('projectId');
+  url.searchParams.delete('parent');
+
+  if (route.currentView !== 'projects') {
+    url.searchParams.set('view', route.currentView);
+  }
+  if (route.currentView === 'project-detail' && route.selectedProjectId) {
+    url.searchParams.set('projectId', route.selectedProjectId);
+    route.projectHistory.forEach((parentId) => url.searchParams.append('parent', parentId));
+  }
+
+  window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`);
+};
+
 export const App: React.FC = () => {
   const { user, loading } = useAuth();
-  const [currentView, setCurrentView] = useState<ViewState>('projects');
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [route, setRoute] = useState<AppRoute>(readRouteFromUrl);
+  const { currentView, selectedProjectId, projectHistory } = route;
 
-  // Navigation stack to handle drilling down into nested building packages
-  const [projectHistory, setProjectHistory] = useState<string[]>([]);
+  useEffect(() => {
+    const restoreRoute = () => setRoute(readRouteFromUrl());
+    window.addEventListener('popstate', restoreRoute);
+    return () => window.removeEventListener('popstate', restoreRoute);
+  }, []);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
+      <div className="session-loading min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
         Loading session...
       </div>
     );
@@ -33,41 +78,55 @@ export const App: React.FC = () => {
 
   // Handle selecting a top-level project from the dashboard
   const handleSelectProject = (id: string) => {
-    setProjectHistory([]); // Clear stack when opening a fresh top-level site project
-    setSelectedProjectId(id);
-    setCurrentView('project-detail');
+    const nextRoute: AppRoute = {
+      currentView: 'project-detail',
+      selectedProjectId: id,
+      projectHistory: [],
+    };
+    writeRouteToUrl(nextRoute);
+    setRoute(nextRoute);
   };
 
   // Handle drilling into a child building package (e.g., Warehouse 1, Substation)
   const handleSelectSubProject = (subProjectId: string) => {
-    if (selectedProjectId) {
-      setProjectHistory((prev) => [...prev, selectedProjectId]);
-    }
-    setSelectedProjectId(subProjectId);
+    const nextRoute: AppRoute = {
+      currentView: 'project-detail',
+      selectedProjectId: subProjectId,
+      projectHistory: selectedProjectId
+        ? [...projectHistory, selectedProjectId]
+        : projectHistory,
+    };
+    writeRouteToUrl(nextRoute);
+    setRoute(nextRoute);
   };
 
   // Handle backing out through the project hierarchy stack
   const handleBackProject = () => {
+    let nextRoute: AppRoute;
     if (projectHistory.length > 0) {
       // Pop the previous parent site ID off the stack
       const previousProjectId = projectHistory[projectHistory.length - 1];
-      setProjectHistory((prev) => prev.slice(0, -1));
-      setSelectedProjectId(previousProjectId);
+      nextRoute = {
+        currentView: 'project-detail',
+        selectedProjectId: previousProjectId,
+        projectHistory: projectHistory.slice(0, -1),
+      };
     } else {
       // Stack is empty -> Return to global Projects Dashboard
-      setSelectedProjectId(null);
-      setCurrentView('projects');
+      nextRoute = { currentView: 'projects', selectedProjectId: null, projectHistory: [] };
     }
+    writeRouteToUrl(nextRoute);
+    setRoute(nextRoute);
   };
 
   const handleNavigate = (view: NavigationTarget) => {
-    setSelectedProjectId(null);
-    setProjectHistory([]);
-    setCurrentView(view);
+    const nextRoute: AppRoute = { currentView: view, selectedProjectId: null, projectHistory: [] };
+    writeRouteToUrl(nextRoute);
+    setRoute(nextRoute);
   };
 
   return (
-    <div className="app-shell min-h-screen bg-slate-950 text-slate-100 font-sans">
+    <div className={`app-shell ${currentView === 'projects' ? 'dashboard-shell' : 'workspace-shell'} min-h-screen bg-slate-950 text-slate-100 font-sans`}>
       <Navbar currentView={currentView} onNavigate={handleNavigate} />
 
       <main className="app-content mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-8 lg:px-8">

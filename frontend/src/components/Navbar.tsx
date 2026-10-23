@@ -27,7 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
           <span className="studio-brand-mark"><Building2 aria-hidden="true" /></span>
           <span className="studio-brand-copy">
             <span className="studio-brand-name">Structural<span>Hub</span></span>
-            <span className="studio-brand-caption">Projects in motion</span>
+            <span className="studio-brand-caption">Engineering workspace</span>
           </span>
         </button>
 

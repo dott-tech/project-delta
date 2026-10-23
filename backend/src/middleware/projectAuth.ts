@@ -7,7 +7,6 @@ const ROLE_HIERARCHY: Record<ProjectRole, number> = {
   VIEWER: 1,
   EDITOR: 2,
   MANAGER: 3,
-  ADMIN: 4,
 };
 
 /**
@@ -27,6 +26,11 @@ export const requireProjectRole = (requiredRole: ProjectRole) => {
       // 1. Global ADMINs bypass all project-level checks
       if (user.role === 'ADMIN') {
         return next();
+      }
+
+      // Client accounts are read-only even if an elevated membership row exists.
+      if (user.role === 'CLIENT' && requiredRole !== 'VIEWER') {
+        return res.status(403).json({ error: 'Client accounts have read-only project access' });
       }
 
       // 2. All authenticated users (Team Members & Clients) have global VIEWER access
