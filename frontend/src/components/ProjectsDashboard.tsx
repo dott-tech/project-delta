@@ -4,14 +4,15 @@ import { useAuth } from '../context/useAuth';
 import {
   Plus, Folder, MapPin, FileText, Archive,
   Edit3, Clock, ExternalLink, ChevronDown, ChevronRight,
-  Layers3, CircleAlert, TrendingUp
+  Layers3, CheckCircle2, TrendingUp
 } from 'lucide-react';
 import { ProjectFilters } from './ProjectFilters';
 import { EditProjectModal } from './EditProjectModal';
 import { ModalPortal } from './ModalPortal';
 import { PhaseTracker } from './PhaseTracker';
-import type { Project } from '../types/project';
+import type { Project, ProjectProgressNode } from '../types/project';
 import { getApiErrorMessage } from '../utils/apiError';
+import { calculatePhaseProgress, calculateProjectProgress, calculateProgressFromTree } from '../utils/phaseProgress';
 
 export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void }> = ({ onSelectProject }) => {
   const { user } = useAuth();
@@ -85,30 +86,37 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
   }, [projects]);
 
   const portfolio = useMemo(() => {
-    const packages = projects.flatMap((project) => project.subProjects || []);
-    const phases = [...projects, ...packages].flatMap((project) => project.phases || []);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const blocked = phases.filter((phase) => phase.status === 'BLOCKED').length;
-    const overdue = phases.filter((phase) => phase.status !== 'COMPLETED' && phase.endDate && new Date(phase.endDate) < today).length;
-    const needsAttention = phases.filter((phase) => phase.status === 'BLOCKED' || (phase.status !== 'COMPLETED' && phase.endDate && new Date(phase.endDate) < today)).length;
-    const progress = phases.length ? Math.round(phases.reduce((sum, phase) => {
-      if (phase.status === 'COMPLETED') return sum + 100;
-      if (phase.status === 'IN_PROGRESS') return sum + (phase.progressPercent ?? 50);
-      return sum;
-    }, 0) / phases.length) : 0;
-    return { packageCount: packages.length, phaseCount: phases.length, blocked, overdue, needsAttention, progress };
+    const toProgressTree = (project: Project): ProjectProgressNode => project.progressTree || ({
+      id: project.id,
+      phases: project.phases || [],
+      subProjects: (project.subProjects || []).map(toProgressTree),
+    });
+    const trees = projects.map(toProgressTree);
+    const flatten = (tree: ProjectProgressNode): ProjectProgressNode[] => [
+      tree,
+      ...tree.subProjects.flatMap(flatten),
+    ];
+    const allNodes = trees.flatMap(flatten);
+    const leaves = allNodes.filter((node) => node.subProjects.length === 0);
+    const phases = leaves.flatMap((node) => node.phases);
+    const completeCount = leaves.filter((node) => calculatePhaseProgress(node.phases) === 100).length;
+    const progress = trees.length
+      ? Math.round(trees.reduce((sum, tree) => sum + calculateProgressFromTree(tree), 0) / trees.length)
+      : 0;
+    return {
+      packageCount: Math.max(0, allNodes.length - trees.length),
+      phaseCount: phases.length,
+      completeCount,
+      trackedCount: leaves.length,
+      progress,
+    };
   }, [projects]);
 
   const statusFor = (project: Project) => {
-    const phases = [project, ...(project.subProjects || [])].flatMap((item) => item.phases || []);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (phases.some((phase) => phase.status === 'BLOCKED')) return { label: 'Needs attention', style: 'bg-rose-500/10 text-rose-300 border-rose-500/20' };
-    if (phases.some((phase) => phase.status !== 'COMPLETED' && phase.endDate && new Date(phase.endDate) < today)) return { label: 'Overdue', style: 'bg-amber-500/10 text-amber-300 border-amber-500/20' };
-    if (phases.length > 0 && phases.every((phase) => phase.status === 'COMPLETED')) return { label: 'Complete', style: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' };
-    if (phases.some((phase) => phase.status === 'IN_PROGRESS' || phase.status === 'COMPLETED')) return { label: 'In progress', style: 'bg-blue-500/10 text-blue-300 border-blue-500/20' };
-    return { label: 'Planning', style: 'bg-slate-700/60 text-slate-300 border-slate-600/60' };
+    const progress = calculateProjectProgress(project);
+    if (progress === 100) return { label: 'Complete', style: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' };
+    if (progress > 0) return { label: 'In progress', style: 'bg-blue-500/10 text-blue-300 border-blue-500/20' };
+    return { label: 'Not started', style: 'bg-slate-700/60 text-slate-300 border-slate-600/60' };
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -205,7 +213,7 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
             <div className="dashboard-metrics">
               <PortfolioMetric icon={<Folder className="h-4 w-4" />} label="Active projects" value={projects.length} detail="Top-level sites" tone="blue" />
               <PortfolioMetric icon={<Layers3 className="h-4 w-4" />} label="Building packages" value={portfolio.packageCount} detail="Across your portfolio" tone="violet" />
-              <PortfolioMetric icon={<CircleAlert className="h-4 w-4" />} label="Needs attention" value={portfolio.needsAttention} detail={`${portfolio.blocked} blocked · ${portfolio.overdue} overdue`} tone={portfolio.needsAttention ? 'rose' : 'emerald'} />
+              <PortfolioMetric icon={<CheckCircle2 className="h-4 w-4" />} label="Structures complete" value={`${portfolio.completeCount}/${portfolio.trackedCount}`} detail="All weighted phases done" tone="emerald" />
               <PortfolioMetric icon={<TrendingUp className="h-4 w-4" />} label="Phase progress" value={`${portfolio.progress}%`} detail={`${portfolio.phaseCount} tracked phases`} tone="emerald" progress={portfolio.progress} />
             </div>
           </section>
@@ -338,7 +346,10 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
 
                       {/* Phase Tracker Bar */}
                       <div className="pt-1">
-                        <PhaseTracker phases={project.phases || []} />
+                        <PhaseTracker
+                          phases={hasSubProjects ? [] : project.phases || []}
+                          progressOverride={hasSubProjects ? calculateProjectProgress(project) : undefined}
+                        />
                       </div>
 
                       {/* Location & Files */}
@@ -373,7 +384,10 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                                 <span className="font-medium text-slate-200">{sub.title}</span>
                                 <span className="text-[10px] text-slate-500">{sub.location}</span>
                               </div>
-                              <PhaseTracker phases={sub.phases || []} />
+                              <PhaseTracker
+                                phases={sub.progressTree?.subProjects.length ? [] : sub.phases || []}
+                                progressOverride={sub.progressTree?.subProjects.length ? calculateProjectProgress(sub) : undefined}
+                              />
                             </div>
                           ))}
                         </div>

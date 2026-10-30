@@ -1,15 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/useAuth';
-import type { Project, ProjectFile, PhaseStatus, ProjectRole } from '../types/project';
+import type { Project, ProjectFile, ProjectPhase, PhaseStatus, ProjectRole, ProjectNavigationNode } from '../types/project';
 import { getApiErrorMessage } from '../utils/apiError';
 import { beginActionLoading } from '../utils/actionLoading';
+import { calculateProjectProgress } from '../utils/phaseProgress';
 import { PhaseTracker } from './PhaseTracker';
 import { ProjectActivityLog } from './ProjectActivityLog';
 import { ModalPortal } from './ModalPortal';
 import { LoadingCard } from './LoadingCard';
 import { 
-  ArrowLeft, FileText, Upload, Trash2, Download, Eye, X,
+  ArrowLeft, FileText, Upload, Trash2, Download, Eye, EyeOff, X,
   Users, Plus, Edit3, AlertCircle, Shield, Settings, Save, ArrowRight, Building2
 } from 'lucide-react';
 
@@ -17,12 +18,11 @@ const PdfDocumentViewer = React.lazy(() =>
   import('./PdfDocumentViewer').then((module) => ({ default: module.PdfDocumentViewer }))
 );
 
-const ENGINEERING_PHASES = ['Concept Design', 'Design Calculation', 'Modeling', 'Sheeting'] as const;
-
 interface Props {
   projectId: string;
   onBack: () => void;
   onSelectSubProject?: (subProjectId: string) => void;
+  onNavigateProject: (projectId: string, ancestorIds: string[]) => void;
 }
 
 interface UserOption {
@@ -52,16 +52,40 @@ const decodePreviewBase64 = (base64: string): Uint8Array<ArrayBuffer> => {
   return bytes;
 };
 
+const findProjectPath = (
+  nodes: ProjectNavigationNode[],
+  projectId: string,
+  ancestors: ProjectNavigationNode[] = []
+): ProjectNavigationNode[] | null => {
+  for (const node of nodes) {
+    const path = [...ancestors, node];
+    if (node.id === projectId) return path;
+    const match = findProjectPath(node.subProjects || [], projectId, path);
+    if (match) return match;
+  }
+  return null;
+};
+
+const hasCodeInProjectTree = (nodes: ProjectNavigationNode[], code: string): boolean =>
+  nodes.some((node) =>
+    node.buildingCode?.trim().toUpperCase() === code ||
+    hasCodeInProjectTree(node.subProjects || [], code)
+  );
+
 export const ProjectDetailView: React.FC<Props> = ({
   projectId,
   onBack,
-  onSelectSubProject
+  onSelectSubProject,
+  onNavigateProject,
 }) => {
   const { user } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [projectPath, setProjectPath] = useState<ProjectNavigationNode[]>([]);
+  const [projectNavigation, setProjectNavigation] = useState<ProjectNavigationNode[]>([]);
+  const [showProjectContext, setShowProjectContext] = useState(false);
 
   // Edit Project Modal / State
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
@@ -75,18 +99,16 @@ export const ProjectDetailView: React.FC<Props> = ({
   const [showBuildingModal, setShowBuildingModal] = useState(false);
   const [buildingCode, setBuildingCode] = useState('');
   const [buildingTitle, setBuildingTitle] = useState('');
-  const [facilityType, setFacilityType] = useState('Warehouse Structure');
+  const [facilityType, setFacilityType] = useState('Steel structure');
   const [buildingLocation, setBuildingLocation] = useState('');
   const [buildingDesc, setBuildingDesc] = useState('');
   const [creatingBuilding, setCreatingBuilding] = useState(false);
-
-  // Phase Creation State
-  const [showPhaseModal, setShowPhaseModal] = useState(false);
-  const [newPhaseName, setNewPhaseName] = useState('');
-  const availablePhaseNames = ENGINEERING_PHASES.filter(
-    (phaseName) => !project?.phases?.some((phase) => phase.name === phaseName)
+  const normalizedBuildingCode = buildingCode.trim().toUpperCase();
+  const duplicateBuildingCode = Boolean(
+    normalizedBuildingCode && hasCodeInProjectTree(projectNavigation, normalizedBuildingCode)
   );
 
+  // Phase Creation State
   // Team Access State
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [memberUserId, setMemberUserId] = useState('');
@@ -145,6 +167,25 @@ export const ProjectDetailView: React.FC<Props> = ({
     void fetchProject();
   }, [fetchProject]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setProjectPath([]);
+    api.get<ProjectNavigationNode[]>('/projects/navigation')
+      .then(({ data }) => {
+        if (!cancelled) {
+          setProjectNavigation(data);
+          setProjectPath(findProjectPath(data, projectId) || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectNavigation([]);
+          setProjectPath([]);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
   // Safely extract active logged-in User ID across all potential JWT keys
   const currentUserId = user?.id;
   const isAdmin = user?.role === 'ADMIN';
@@ -188,6 +229,7 @@ export const ProjectDetailView: React.FC<Props> = ({
         location: editLocation,
         description: editDescription,
       });
+      window.dispatchEvent(new Event('project-directory-refresh'));
       setShowEditProjectModal(false);
       refreshProject();
     } catch (err: unknown) {
@@ -202,7 +244,7 @@ export const ProjectDetailView: React.FC<Props> = ({
     if (!project) return;
     setBuildingCode('');
     setBuildingTitle('');
-    setFacilityType('Warehouse Structure');
+    setFacilityType('Steel structure');
     setBuildingLocation(project.location || '');
     setBuildingDesc('');
     setShowBuildingModal(true);
@@ -211,22 +253,23 @@ export const ProjectDetailView: React.FC<Props> = ({
   // Create Building Package (Sub-Project)
   const handleCreateBuildingPackage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!buildingTitle.trim() || !buildingCode.trim()) return;
+    if (!buildingTitle.trim() || !normalizedBuildingCode || duplicateBuildingCode) return;
 
     try {
       setCreatingBuilding(true);
-      const fullTitle = `[${buildingCode.toUpperCase()}] ${buildingTitle}`;
+      const fullTitle = `[${normalizedBuildingCode}] ${buildingTitle}`;
 
       await api.post('/projects', {
         title: fullTitle,
         projectType: facilityType,
         location: buildingLocation || project?.location || 'On-Site',
         description: buildingDesc,
-        buildingCode: buildingCode.toUpperCase(),
+        buildingCode: normalizedBuildingCode,
         facilityType: facilityType,
         parentProjectId: projectId,
       });
 
+      window.dispatchEvent(new Event('project-directory-refresh'));
       setShowBuildingModal(false);
       refreshProject();
     } catch (err: unknown) {
@@ -246,6 +289,7 @@ export const ProjectDetailView: React.FC<Props> = ({
 
     try {
       await api.delete(`/projects/${projectId}`);
+      window.dispatchEvent(new Event('project-directory-refresh'));
       onBack();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to delete project'));
@@ -316,29 +360,17 @@ export const ProjectDetailView: React.FC<Props> = ({
       return;
     }
     try {
-      await api.patch(`/projects/${projectId}/phases/${phaseId}`, { status: newStatus });
-      refreshProject();
+      const { data } = await api.patch(`/projects/${projectId}/phases/${phaseId}`, { status: newStatus });
+      const updatedPhases = Array.isArray(data.updatedPhases) ? data.updatedPhases : [data];
+      const updatedById = new Map(updatedPhases.map((phase: ProjectPhase) => [phase.id, phase]));
+      setProject((current) => current
+        ? {
+            ...current,
+            phases: current.phases?.map((phase) => ({ ...phase, ...(updatedById.get(phase.id) || {}) })),
+          }
+        : current);
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to update phase status'));
-    }
-  };
-
-  // Create New Phase
-  const handleCreatePhase = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPhaseName.trim()) return;
-
-    try {
-      await api.post(`/projects/${projectId}/phases`, {
-        name: newPhaseName,
-        status: 'NOT_STARTED',
-        progressPercent: 0,
-      });
-      setNewPhaseName('');
-      setShowPhaseModal(false);
-      refreshProject();
-    } catch (err: unknown) {
-      alert(getApiErrorMessage(err, 'Failed to create phase'));
     }
   };
 
@@ -538,6 +570,11 @@ export const ProjectDetailView: React.FC<Props> = ({
     );
   }
 
+  const overallProjectProgress = calculateProjectProgress(project);
+  const ancestorProjects = projectPath.at(-1)?.id === projectId
+    ? projectPath.slice(0, -1)
+    : project.parentProject ? [project.parentProject] : [];
+
   return (
     <div className="project-detail-page space-y-6">
       {/* Header & Navigation */}
@@ -550,12 +587,22 @@ export const ProjectDetailView: React.FC<Props> = ({
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
-              {project.parentProject && (
-                <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
-                  <Building2 className="h-3 w-3 text-blue-400" /> {project.parentProject.title}
-                </span>
-              )}
+            <div className="project-ancestor-trail flex flex-wrap items-center gap-1.5">
+              {ancestorProjects.map((ancestor, index) => (
+                <React.Fragment key={ancestor.id}>
+                  {index > 0 && <span className="project-ancestor-separator" aria-hidden="true">›</span>}
+                  <button
+                    type="button"
+                    className="project-ancestor-link"
+                    onClick={() => onNavigateProject(ancestor.id, ancestorProjects.slice(0, index).map((item) => item.id))}
+                    title={`Open ${ancestor.title}`}
+                  >
+                    {index === 0 && <Building2 className="h-3 w-3" aria-hidden="true" />}
+                    {ancestor.buildingCode && <span className="project-ancestor-code">[{ancestor.buildingCode}]</span>}
+                    <span>{ancestor.title}</span>
+                  </button>
+                </React.Fragment>
+              ))}
               <span className="text-xs px-2.5 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full font-semibold">
                 {project.projectType}
               </span>
@@ -565,9 +612,18 @@ export const ProjectDetailView: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Action Buttons */}
-        {canManage && (
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowProjectContext((visible) => !visible)}
+            aria-expanded={showProjectContext}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium rounded-lg transition"
+          >
+            {showProjectContext ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showProjectContext ? 'Hide details' : 'Show details'}
+          </button>
+          {canManage && (
+            <>
             <button
               onClick={handleOpenBuildingModal}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition shadow-lg shadow-blue-600/20"
@@ -589,28 +645,33 @@ export const ProjectDetailView: React.FC<Props> = ({
               <Trash2 className="w-3.5 h-3.5 text-red-400" />
               Delete Site
             </button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
 
-      <section className="project-snapshot grid grid-cols-2 gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 sm:grid-cols-4 sm:p-5">
+      {showProjectContext && <section className="project-snapshot grid grid-cols-2 gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 sm:grid-cols-4 sm:p-5">
         <div className="col-span-2 sm:col-span-4">
           <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Project scope</span>
           <p className="mt-1 text-sm leading-6 text-slate-300">{project.description || 'No master site scope or description provided.'}</p>
         </div>
         <DetailMetric label="Structures" value={project.subProjects?.length || 0} />
-        <DetailMetric label="Tracked phases" value={project.phases?.length || 0} />
+        <DetailMetric
+          label={project.subProjects?.length ? 'Overall progress' : 'Tracked phases'}
+          value={project.subProjects?.length ? `${overallProjectProgress}%` : project.phases?.length || 0}
+        />
         <DetailMetric label="Files & assets" value={project.files?.length || 0} />
         <DetailMetric label="Project type" value={project.facilityType || project.projectType} />
-      </section>
+      </section>}
 
       {/* Workbench Grid Layout */}
       <div className="workbench-grid grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* Left Column (Building Packages, Site Phases, Files) */}
-        <div className="workbench-primary lg:col-span-2 space-y-6">
+        <div className={`workbench-primary ${showProjectContext ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-6`}>
 
           {/* Facility Buildings & Structures Grid */}
+          {Boolean(project.subProjects?.length) && (
           <div className="workbench-panel bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <div>
@@ -629,13 +690,8 @@ export const ProjectDetailView: React.FC<Props> = ({
               )}
             </div>
 
-            {!project.subProjects || project.subProjects.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
-                No individual building packages or structures added to this site program yet.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {project.subProjects.map((bld) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {project.subProjects!.map((bld) => (
                   <div
                     key={bld.id}
                     className="p-4 bg-slate-950 border border-slate-800/80 rounded-xl space-y-3 hover:border-blue-500/40 transition flex flex-col justify-between"
@@ -656,7 +712,10 @@ export const ProjectDetailView: React.FC<Props> = ({
                     </div>
 
                     <div className="pt-2 border-t border-slate-900 space-y-3">
-                      <PhaseTracker phases={bld.phases || []} />
+                      <PhaseTracker
+                        phases={bld.progressTree?.subProjects.length ? [] : bld.phases || []}
+                        progressOverride={bld.progressTree?.subProjects.length ? calculateProjectProgress(bld) : undefined}
+                      />
 
                       {onSelectSubProject && (
                         <button
@@ -669,84 +728,28 @@ export const ProjectDetailView: React.FC<Props> = ({
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
+            </div>
           </div>
+          )}
 
-          {/* Engineering Phase Management */}
+          {/* A parent project tracks its structures; phases belong to each structure. */}
+          {(!project.subProjects || project.subProjects.length === 0) && (
           <div className="workbench-panel bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5 shadow-xl">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <div>
                 <h3 className="font-semibold text-white text-base">Engineering Phases</h3>
-                <p className="text-xs text-slate-400">Track concept design, calculations, modeling, and sheeting.</p>
+              <p className="text-xs text-slate-400">Each completed phase adds its fixed share to overall progress.</p>
               </div>
-              {canEdit && availablePhaseNames.length > 0 && (
-                <button
-                  onClick={() => setShowPhaseModal(true)}
-                  className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition font-medium"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Phase
-                </button>
-              )}
             </div>
 
             {/* Interactive Progress Bar Component */}
             <PhaseTracker
               phases={project.phases || []}
-              projectId={project.id}
-              userProjectRole={userProjectRole}
-              onPhaseUpdated={fetchProject}
+              canEdit={canEdit}
+              onPhaseStatusChange={handleUpdatePhaseStatus}
             />
-
-            {!project.phases || project.phases.length === 0 ? (
-              <div className="text-center py-6 text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
-                No site phases configured yet.
-              </div>
-            ) : (
-              <div className="space-y-3 pt-2 border-t border-slate-800/80">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-                  Phase Status Controls
-                </span>
-                {project.phases.map((phase) => (
-                  <div
-                    key={phase.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-slate-950 border border-slate-800/80 rounded-xl gap-3"
-                  >
-                    <div>
-                      <span className="text-sm font-medium text-white">{phase.name}</span>
-                      {phase.notes && <p className="text-xs text-slate-400 mt-0.5">{phase.notes}</p>}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {(['NOT_STARTED', 'IN_PROGRESS', 'BLOCKED', 'COMPLETED'] as PhaseStatus[]).map((status) => (
-                          <button
-                            key={status}
-                            disabled={!canEdit}
-                            onClick={() => handleUpdatePhaseStatus(phase.id, status)}
-                            className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium transition ${
-                              phase.status === status
-                                ? status === 'COMPLETED'
-                                  ? 'bg-green-500/20 text-green-400 border-green-500/30'
-                                  : status === 'IN_PROGRESS'
-                                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                                  : status === 'BLOCKED'
-                                  ? 'bg-red-500/20 text-red-400 border-red-500/30'
-                                  : 'bg-slate-800 text-slate-200 border-slate-700'
-                                : 'bg-slate-900/50 text-slate-500 border-slate-800 hover:text-slate-300'
-                            } ${!canEdit ? 'cursor-not-allowed opacity-75' : ''}`}
-                          >
-                            {status.replace('_', ' ')}
-                          </button>
-                        ))}
-                      </div>
-
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
+          )}
 
           {/* S3 File Uploads & Per-File Role Visibility */}
           <div className="workbench-panel file-library-panel bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
@@ -903,11 +906,10 @@ export const ProjectDetailView: React.FC<Props> = ({
               </div>
             )}
           </div>
-          {user?.role !== 'CLIENT' && <ProjectActivityLog projectId={projectId} />}
         </div>
 
         {/* Right Sidebar Column (Team Access & RBAC) */}
-        <div className="workbench-sidebar space-y-6">
+        {showProjectContext && <div className="workbench-sidebar space-y-6">
           <div className="workbench-panel bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <h3 className="font-semibold text-white text-base flex items-center gap-2">
@@ -962,7 +964,12 @@ export const ProjectDetailView: React.FC<Props> = ({
               </div>
             )}
           </div>
-        </div>
+          {user?.role !== 'CLIENT' && (
+            <div className="w-full min-w-0">
+              <ProjectActivityLog projectId={projectId} />
+            </div>
+          )}
+        </div>}
       </div>
 
       {/* Create Building Package Modal */}
@@ -984,8 +991,15 @@ export const ProjectDetailView: React.FC<Props> = ({
                     placeholder="WH-01"
                     value={buildingCode}
                     onChange={(e) => setBuildingCode(e.target.value)}
+                    aria-invalid={duplicateBuildingCode}
+                    aria-describedby={duplicateBuildingCode ? 'duplicate-building-code-error' : undefined}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm uppercase focus:outline-none focus:border-blue-500 font-mono"
                   />
+                  {duplicateBuildingCode && (
+                    <p id="duplicate-building-code-error" role="alert" className="mt-1 text-[11px] text-rose-300">
+                      This code is already used by another project.
+                    </p>
+                  )}
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-400 mb-1">Building Name</label>
@@ -1002,17 +1016,14 @@ export const ProjectDetailView: React.FC<Props> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">Facility Type</label>
+                  <label className="block text-xs font-medium text-slate-400 mb-1">Type</label>
                   <select
                     value={facilityType}
                     onChange={(e) => setFacilityType(e.target.value)}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                   >
-                    <option value="Warehouse Structure">Warehouse Structure</option>
-                    <option value="Manufacturing Plant">Manufacturing Plant</option>
-                    <option value="Substation & Utilities">Substation & Utilities</option>
-                    <option value="Admin & Office Block">Admin & Office Block</option>
-                    <option value="Cold Storage & Silo">Cold Storage & Silo</option>
+                    <option value="Steel structure">Steel structure</option>
+                    <option value="Concrete structure">Concrete structure</option>
                   </select>
                 </div>
                 <div>
@@ -1048,7 +1059,7 @@ export const ProjectDetailView: React.FC<Props> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={creatingBuilding}
+                  disabled={creatingBuilding || duplicateBuildingCode}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition disabled:opacity-50"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -1234,43 +1245,6 @@ export const ProjectDetailView: React.FC<Props> = ({
                 {savingReview ? 'Saving…' : 'Approve'}
               </button>
             </div>
-          </div>
-        </div>
-        </ModalPortal>
-      )}
-
-      {/* Add Phase Modal */}
-      {showPhaseModal && (
-        <ModalPortal>
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4">
-            <h3 className="text-base font-bold text-white">Add Phase</h3>
-            <form onSubmit={handleCreatePhase} className="space-y-3">
-              <select
-                required
-                value={newPhaseName}
-                onChange={(e) => setNewPhaseName(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-              >
-                <option value="" disabled>Select an engineering phase</option>
-                {availablePhaseNames.map((phaseName) => <option key={phaseName} value={phaseName}>{phaseName}</option>)}
-              </select>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowPhaseModal(false)}
-                  className="px-3 py-1.5 text-xs bg-slate-800 text-slate-300 rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium"
-                >
-                  Create Phase
-                </button>
-              </div>
-            </form>
           </div>
         </div>
         </ModalPortal>

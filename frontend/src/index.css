@@ -1588,3 +1588,83 @@ select:focus-visible, textarea:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .action-loading-backdrop, .action-loading-card, .action-loading-orbit-outer, .action-loading-progress span { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.studio-projects-group { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 3px; }
+.studio-project-directory { min-width: 0; margin: 2px 0 5px; padding-left: 8px; }
+.project-directory-heading { display: flex; align-items: center; gap: 7px; padding: 4px 4px 7px; color: rgba(232,243,247,.45); font-size: 8px; font-weight: 750; letter-spacing: .14em; }
+.project-directory-heading > svg { width: 12px; height: 12px; color: var(--hub-ice); }
+.project-directory-mobile-toggle { display: none; }
+.project-directory-content { display: block; }
+.project-directory-nav { max-height: min(48vh, 460px); overflow: auto; padding: 0 2px 2px 0; }
+.project-directory-status { margin: 8px 4px 2px; color: rgba(232,243,247,.55); font-size: 10px; line-height: 1.5; }
+.project-directory-nav ul { margin: 0; padding: 0; list-style: none; }
+.project-directory-children { margin: 3px 0 4px 12px !important; padding-left: 9px !important; border-left: 1px solid rgba(165,215,232,.16); }
+.project-directory-row { display: grid; grid-template-columns: 23px minmax(0,1fr); gap: 3px; min-height: 36px; align-items: center; border: 1px solid transparent; border-radius: 9px; }
+.project-directory-row.is-active { border-color: rgba(165,215,232,.22); background: rgba(11,58,95,.52); }
+.project-directory-toggle, .project-directory-link { min-width: 0; border: 0; color: rgba(232,243,247,.75); background: transparent; cursor: pointer; }
+.project-directory-toggle { display: grid; width: 23px; height: 30px; place-items: center; padding: 0; color: rgba(232,243,247,.48); }
+.project-directory-toggle svg { width: 14px; height: 14px; }
+.project-directory-toggle:disabled { cursor: default; opacity: .65; }
+.project-directory-toggle-spacer { display: block; width: 5px; height: 5px; border-radius: 50%; background: rgba(165,215,232,.45); }
+.project-directory-link { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 8px; overflow: hidden; padding: 5px 7px 5px 2px; border-radius: 7px; text-align: left; transition: color .16s ease, background .16s ease; }
+.project-directory-link > svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--hub-ice); }
+.project-directory-name { overflow: hidden; flex: 1 1 auto; color: inherit; font-size: 11px; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
+.project-directory-code { flex: 0 0 auto; color: rgba(232,243,247,.47); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.project-directory-row.is-active .project-directory-link { color: #f4fbfd; }
+.project-directory-row.is-active .project-directory-name { color: var(--hub-ice); font-weight: 680; }
+.project-directory-row:hover:not(.is-active) { background: var(--hub-surface); }
+.project-directory-row:hover .project-directory-link { color: #f2f8fa; }
+.project-directory-row:focus-within { outline: 2px solid var(--hub-ice); outline-offset: 2px; }
+.studio-project-directory button:focus-visible { outline: 2px solid var(--hub-ice) !important; outline-offset: 2px; box-shadow: none !important; }
+.phase-tracker-chip.is-interactive { cursor: pointer; }
+.phase-tracker-chip.is-interactive:not(:disabled):hover { border-color: rgba(165,215,232,.48) !important; color: #f0faff !important; background: rgba(11,58,95,.62) !important; transform: translateY(-1px); }
+.phase-tracker-chip.is-interactive.is-complete:not(:disabled):hover { background: rgba(11,58,95,.82) !important; }
+.phase-tracker-chip.is-interactive:disabled { cursor: not-allowed; opacity: .58; }
+.phase-tracker-chip.is-interactive:focus-visible { outline: 2px solid var(--hub-ice) !important; outline-offset: 2px; }
+.project-ancestor-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  border: 1px solid rgba(165,215,232,.18);
+  border-radius: 7px;
+  padding: 3px 7px;
+  color: #b7c9d7;
+  background: rgba(255,255,255,.045);
+  font-size: 10px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.project-ancestor-link:hover { border-color: rgba(165,215,232,.42); color: #e8f3f7; background: rgba(11,58,95,.55); }
+.project-ancestor-link:focus-visible { outline: 2px solid var(--hub-ice); outline-offset: 2px; }
+.project-ancestor-link svg { flex: 0 0 auto; color: var(--hub-ice); }
+.project-ancestor-code { color: var(--hub-ice); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.project-ancestor-separator { color: rgba(165,215,232,.45); font-size: 15px; }
+.studio-nav .project-directory-root-toggle > svg:last-child { width: 14px; height: 14px; margin-left: auto; color: rgba(165,215,232,.65); }
+
+@media (max-width: 680px) {
+  .studio-projects-group { position: relative; flex: 1; }
+  .studio-project-directory.is-projects-root { position: static; margin: 2px 0 5px; padding-left: 8px; }
+  .studio-project-directory.is-projects-root .project-directory-content.is-projects-root-content {
+    position: static;
+    display: block;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .studio-project-directory.is-projects-root .project-directory-nav { max-height: min(48vh, 460px); }
+  .studio-project-directory { position: relative; margin: 0; padding: 0; }
+  .project-directory-mobile-toggle { display: flex; width: 100%; min-height: 27px; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(165,215,232,.15) !important; border-radius: 8px !important; padding: 4px 6px !important; color: rgba(232,243,247,.7) !important; background: rgba(255,255,255,.035) !important; font-size: 9px; }
+  .project-directory-mobile-toggle > svg { width: 12px; height: 12px; color: var(--hub-ice); }
+  .project-directory-mobile-toggle > svg:last-child { width: 10px; height: 10px; }
+  .project-directory-content { position: absolute; z-index: 120; top: calc(100% + 7px); left: 0; display: none; width: min(340px, calc(100vw - 30px)); max-height: 55vh; overflow: hidden; border: 1px solid var(--hub-surface-hover); border-radius: 12px; padding: 10px; background: #061326; box-shadow: 0 18px 45px rgba(0,0,0,.45); }
+  .project-directory-content.is-mobile-open { display: block; }
+  .project-directory-heading { padding: 3px 4px 8px; }
+  .project-directory-nav { max-height: calc(55vh - 42px); }
+}

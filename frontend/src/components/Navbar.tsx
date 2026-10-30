@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/useAuth';
+import { ProjectDirectory } from './ProjectDirectory';
 import {
   Building2,
   FolderKanban,
+  ChevronDown,
+  ChevronRight,
   Users,
   Archive,
   LogOut,
@@ -14,11 +17,14 @@ export type NavView = 'projects' | 'admin' | 'archive' | 'project-detail';
 interface NavbarProps {
   currentView: NavView;
   onNavigate: (view: 'projects' | 'admin' | 'archive') => void;
+  projectId: string | null;
+  onNavigateProject: (projectId: string, ancestorIds: string[]) => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
+export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, projectId, onNavigateProject }) => {
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
+  const [projectsExpanded, setProjectsExpanded] = useState(false);
 
   return (
     <header className="studio-header">
@@ -32,9 +38,24 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
         </button>
 
         <nav aria-label="Main navigation" className="studio-nav">
-          <button onClick={() => onNavigate('projects')} aria-current={currentView === 'projects' || currentView === 'project-detail' ? 'page' : undefined} className={`studio-nav-link ${currentView === 'projects' || currentView === 'project-detail' ? 'is-active' : ''}`}>
-            <FolderKanban aria-hidden="true" /><span>Projects</span>
-          </button>
+          <div className="studio-projects-group">
+            <button
+              type="button"
+              onClick={() => setProjectsExpanded((expanded) => !expanded)}
+              aria-current={currentView === 'projects' || currentView === 'project-detail' ? 'page' : undefined}
+              aria-expanded={projectsExpanded}
+              aria-controls="project-directory-tree"
+              className={`studio-nav-link project-directory-root-toggle ${currentView === 'projects' || currentView === 'project-detail' ? 'is-active' : ''}`}
+            >
+              <FolderKanban aria-hidden="true" /><span>Projects</span>
+              {projectsExpanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+            </button>
+            {projectsExpanded && (
+              <div id="project-directory-tree">
+                <ProjectDirectory activeProjectId={projectId} onNavigate={onNavigateProject} embeddedInSidebar />
+              </div>
+            )}
+          </div>
           {isAdmin && <>
             <button onClick={() => onNavigate('admin')} aria-current={currentView === 'admin' ? 'page' : undefined} className={`studio-nav-link ${currentView === 'admin' ? 'is-active' : ''}`}>
               <Users aria-hidden="true" /><span>Team</span>

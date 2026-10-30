@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { type Project } from '../types/project';
 import { PhaseTracker } from './PhaseTracker';
+import { calculateProjectProgress } from '../utils/phaseProgress';
 
 interface Props {
   project: Project;
@@ -9,7 +10,7 @@ interface Props {
 
 export const ProjectTreeCard: React.FC<Props> = ({ project, onSelectProject }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
-  const hasSubProjects = project.subProjects && project.subProjects.length > 0;
+  const hasSubProjects = Boolean(project.progressTree?.subProjects.length || project.subProjects?.length);
 
   return (
     <div className="border border-gray-200 rounded-lg bg-white shadow-sm hover:shadow-md transition duration-150 overflow-hidden mb-4">
@@ -66,7 +67,10 @@ export const ProjectTreeCard: React.FC<Props> = ({ project, onSelectProject }) =
 
         {/* Phase Tracker */}
         <div className="mt-4">
-          <PhaseTracker phases={project.phases || []} />
+          <PhaseTracker
+            phases={hasSubProjects ? [] : project.phases || []}
+            progressOverride={hasSubProjects ? calculateProjectProgress(project) : undefined}
+          />
         </div>
       </div>
 
@@ -86,7 +90,10 @@ export const ProjectTreeCard: React.FC<Props> = ({ project, onSelectProject }) =
                 <h4 className="font-medium text-sm text-gray-800">{sub.title}</h4>
                 <span className="text-xs text-gray-400">{sub.location}</span>
               </div>
-              <PhaseTracker phases={sub.phases || []} />
+              <PhaseTracker
+                phases={sub.progressTree?.subProjects.length ? [] : sub.phases || []}
+                progressOverride={sub.progressTree?.subProjects.length ? calculateProjectProgress(sub) : undefined}
+              />
             </div>
           ))}
         </div>

@@ -1,4 +1,4 @@
-export type PhaseStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'BLOCKED' | 'COMPLETED';
+export type PhaseStatus = 'NOT_STARTED' | 'COMPLETED';
 export type ProjectRole = 'MANAGER' | 'EDITOR' | 'VIEWER';
 export type FileReviewStatus = 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 
@@ -51,6 +51,23 @@ export interface ProjectActivity {
   user?: { id: string; name: string; email: string } | null;
 }
 
+export interface ProjectNavigationNode {
+  id: string;
+  title: string;
+  location: string;
+  projectType?: string;
+  buildingCode?: string | null;
+  parentProjectId?: string | null;
+  isArchived?: boolean;
+  subProjects?: ProjectNavigationNode[];
+}
+
+export interface ProjectProgressNode {
+  id: string;
+  phases: ProjectPhase[];
+  subProjects: ProjectProgressNode[];
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -61,7 +78,7 @@ export interface Project {
   createdAt: string;
   updatedAt?: string;
   parentProjectId?: string | null;
-  parentProject?: { id: string; title: string; location: string } | null;
+  parentProject?: ProjectNavigationNode | null;
   buildingCode?: string | null;
   facilityType?: string | null;
   effectiveProjectRole?: ProjectRole | null;
@@ -70,5 +87,6 @@ export interface Project {
   files?: ProjectFile[];
   phases?: ProjectPhase[];
   subProjects?: Project[];
+  progressTree?: ProjectProgressNode;
   members?: ProjectMember[];
 }

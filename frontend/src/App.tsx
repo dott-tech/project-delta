@@ -100,6 +100,17 @@ export const App: React.FC = () => {
     setRoute(nextRoute);
   };
 
+  const handleNavigateProject = (projectId: string, ancestorIds: string[]) => {
+    if (projectId === selectedProjectId) return;
+    const nextRoute: AppRoute = {
+      currentView: 'project-detail',
+      selectedProjectId: projectId,
+      projectHistory: ancestorIds,
+    };
+    writeRouteToUrl(nextRoute);
+    setRoute(nextRoute);
+  };
+
   // Handle backing out through the project hierarchy stack
   const handleBackProject = () => {
     let nextRoute: AppRoute;
@@ -127,7 +138,12 @@ export const App: React.FC = () => {
 
   return (
     <div className={`app-shell ${currentView === 'projects' ? 'dashboard-shell' : 'workspace-shell'} min-h-screen bg-slate-950 text-slate-100 font-sans`}>
-      <Navbar currentView={currentView} onNavigate={handleNavigate} />
+      <Navbar
+        currentView={currentView}
+        onNavigate={handleNavigate}
+        projectId={currentView === 'project-detail' ? selectedProjectId : null}
+        onNavigateProject={handleNavigateProject}
+      />
 
       <main className="app-content mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-8 lg:px-8">
         {(currentView === 'projects' || (currentView === 'project-detail' && !selectedProjectId)) && (
@@ -140,6 +156,7 @@ export const App: React.FC = () => {
             projectId={selectedProjectId} 
             onBack={handleBackProject}
             onSelectSubProject={handleSelectSubProject}
+            onNavigateProject={handleNavigateProject}
           />
         )}
 

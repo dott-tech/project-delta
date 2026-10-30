@@ -46,6 +46,24 @@ const getUserId = (req: Request): string | null => {
 const canDownloadProjectFiles = (globalRole: string, projectRole: ProjectRole | null) =>
   globalRole === 'ADMIN' || (globalRole === 'TEAM_MEMBER' && projectRole === 'EDITOR');
 
+const normalizeBuildingCode = (code: unknown) =>
+  typeof code === 'string' ? code.trim().toUpperCase() : '';
+
+const hasBuildingCode = async (buildingCode: string, excludeProjectId?: string) => {
+  const normalizedCode = normalizeBuildingCode(buildingCode);
+  if (!normalizedCode) return false;
+  return Boolean(await prisma.project.findFirst({
+    where: {
+      buildingCode: { equals: normalizedCode, mode: 'insensitive' },
+      ...(excludeProjectId ? { id: { not: excludeProjectId } } : {}),
+    },
+    select: { id: true },
+  }));
+};
+
+const isBuildingCodeUniqueError = (error: any) => error?.code === 'P2002' &&
+  String(error?.meta?.target || '').toLowerCase().includes('buildingcode');
+
 const logProjectActivity = async (projectId: string, req: Request, action: string, details: string) => {
   try {
     await prisma.projectActivity.create({
@@ -177,6 +195,68 @@ const fullProjectInclude = {
   updatedBy: { select: { id: true, email: true, name: true } },
 };
 
+type ProjectProgressNode = {
+  id: string;
+  phases: { id: string; name: string; status: PhaseStatus; progressPercent: number; order: number }[];
+  subProjects: ProjectProgressNode[];
+};
+
+type ProjectProgressRowNode = {
+  id: string;
+  parentProjectId: string | null;
+  phases: { id: string; name: string; status: PhaseStatus; progressPercent: number; order: number }[];
+  subProjects: ProjectProgressRowNode[];
+};
+
+const getProjectProgressTreeIndex = async (): Promise<Map<string, ProjectProgressNode>> => {
+  const rows = await prisma.project.findMany({
+    select: {
+      id: true,
+      parentProjectId: true,
+      phases: {
+        select: { id: true, name: true, status: true, progressPercent: true, order: true },
+        orderBy: { order: 'asc' },
+      },
+    },
+    orderBy: { title: 'asc' },
+  });
+  const nodes = new Map<string, ProjectProgressRowNode>(
+    rows.map((row): [string, ProjectProgressRowNode] => [row.id, { ...row, subProjects: [] }])
+  );
+
+  const wouldCreateCycle = (nodeId: string, parentId: string) => {
+    let cursor: string | null = parentId;
+    const visited = new Set<string>();
+    while (cursor && !visited.has(cursor)) {
+      if (cursor === nodeId) return true;
+      visited.add(cursor);
+      cursor = nodes.get(cursor)?.parentProjectId ?? null;
+    }
+    return Boolean(cursor);
+  };
+
+  for (const row of rows) {
+    const node = nodes.get(row.id)!;
+    const parent = row.parentProjectId ? nodes.get(row.parentProjectId) : undefined;
+    if (parent && parent.id !== node.id && !wouldCreateCycle(node.id, parent.id)) {
+      parent.subProjects.push(node);
+    }
+  }
+
+  const publicNodes = new Map<string, ProjectProgressNode>();
+  const exposeTree = (node: ProjectProgressRowNode): ProjectProgressNode => {
+    const existing = publicNodes.get(node.id);
+    if (existing) return existing;
+    const result: ProjectProgressNode = { id: node.id, phases: node.phases, subProjects: [] };
+    publicNodes.set(node.id, result);
+    result.subProjects = node.subProjects.map(exposeTree);
+    return result;
+  };
+
+  for (const node of nodes.values()) exposeTree(node);
+  return publicNodes;
+};
+
 // ============================================================================
 // 1. GET ALL ROOT-LEVEL PROJECTS (Available to All Authenticated Users)
 // ============================================================================
@@ -252,10 +332,75 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
       };
     });
 
-    res.json(sanitizedProjects);
+    const progressTrees = await getProjectProgressTreeIndex();
+    res.json(sanitizedProjects.map((project) => ({
+      ...project,
+      progressTree: progressTrees.get(project.id),
+      subProjects: project.subProjects.map((subProject) => ({
+        ...subProject,
+        progressTree: progressTrees.get(subProject.id),
+      })),
+    })));
   } catch (error: any) {
     console.error('SERVER ERROR FETCHING PROJECTS:', error);
       res.status(500).json({ error: 'Failed to fetch projects' });
+  }
+});
+
+router.get('/navigation', authenticateToken, async (_req: Request, res: Response) => {
+  try {
+    type NavigationProject = {
+      id: string;
+      title: string;
+      location: string;
+      projectType: string;
+      buildingCode: string | null;
+      parentProjectId: string | null;
+      subProjects: NavigationProject[];
+    };
+
+    const rows = await prisma.project.findMany({
+      where: { isArchived: false },
+      select: {
+        id: true,
+        title: true,
+        location: true,
+        projectType: true,
+        buildingCode: true,
+        parentProjectId: true,
+      },
+      orderBy: { title: 'asc' },
+    });
+    const nodes = new Map<string, NavigationProject>(
+      rows.map((row): [string, NavigationProject] => [row.id, { ...row, subProjects: [] }])
+    );
+    const roots: NavigationProject[] = [];
+
+    const wouldCreateCycle = (nodeId: string, parentId: string) => {
+      let cursor: string | null = parentId;
+      const visited = new Set<string>();
+      while (cursor && !visited.has(cursor)) {
+        if (cursor === nodeId) return true;
+        visited.add(cursor);
+        cursor = nodes.get(cursor)?.parentProjectId ?? null;
+      }
+      return Boolean(cursor);
+    };
+
+    for (const row of rows) {
+      const node = nodes.get(row.id)!;
+      const parent = row.parentProjectId ? nodes.get(row.parentProjectId) : undefined;
+      if (parent && parent.id !== node.id && !wouldCreateCycle(node.id, parent.id)) {
+        parent.subProjects.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+
+    return res.json(roots);
+  } catch (error) {
+    console.error('Failed to load project navigation:', error);
+    return res.status(500).json({ error: 'Failed to load project navigation' });
   }
 });
 
@@ -547,12 +692,17 @@ router.get(
         }));
         return { ...subProject, files: visibleFiles };
       }));
+      const progressTrees = await getProjectProgressTreeIndex();
 
       res.json({
         ...project,
         effectiveProjectRole: effectiveRole,
         files: filesWithPresignedUrls,
-        subProjects: sanitizedSubProjects,
+        progressTree: progressTrees.get(project.id),
+        subProjects: sanitizedSubProjects.map((subProject) => ({
+          ...subProject,
+          progressTree: progressTrees.get(subProject.id),
+        })),
       });
     } catch (error) {
       console.error('Error fetching project:', error);
@@ -596,6 +746,11 @@ router.post(
         }
       }
 
+      const normalizedBuildingCode = normalizeBuildingCode(buildingCode);
+      if (normalizedBuildingCode && await hasBuildingCode(normalizedBuildingCode)) {
+        return res.status(409).json({ error: `Structure code “${normalizedBuildingCode}” is already used by another project.` });
+      }
+
       const newProject = await prisma.project.create({
         data: {
           title: String(title),
@@ -603,7 +758,7 @@ router.post(
           location: String(location),
           description: description ? String(description) : null,
           parentProjectId: parentProjectId ? String(parentProjectId) : null,
-          buildingCode: buildingCode ? String(buildingCode).trim() : null,
+          buildingCode: normalizedBuildingCode || null,
           facilityType: facilityType ? String(facilityType).trim() : null,
           createdByUserId: String(currentUserId),
           members: {
@@ -622,11 +777,19 @@ router.post(
         include: fullProjectInclude,
       });
 
+      // Parent/site progress is derived from its structures, so phase records only live on leaves.
+      if (parentProjectId) {
+        await prisma.projectPhase.deleteMany({ where: { projectId: String(parentProjectId) } });
+      }
+
       await logProjectActivity(newProject.id, req, 'project.created', `Created project “${newProject.title}”`);
 
       return res.status(201).json(newProject);
     } catch (error: any) {
       console.error('Project creation failed:', error);
+      if (isBuildingCodeUniqueError(error)) {
+        return res.status(409).json({ error: 'That structure code is already used by another project.' });
+      }
       return res.status(500).json({
         error: 'Failed to create project',
       });
@@ -939,13 +1102,19 @@ const handleUpdateProject = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { title, projectType, location, description, parentProjectId, buildingCode, facilityType } = req.body;
     const currentUserId = getUserId(req);
+    const projectId = String(id);
+    const existingProject = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { parentProjectId: true, buildingCode: true },
+    });
+    if (!existingProject) return res.status(404).json({ error: 'Project not found' });
 
     const updateData: any = {};
     if (title !== undefined) updateData.title = String(title);
     if (projectType !== undefined) updateData.projectType = String(projectType);
     if (location !== undefined) updateData.location = String(location);
     if (description !== undefined) updateData.description = description ? String(description) : null;
-    if (buildingCode !== undefined) updateData.buildingCode = buildingCode ? String(buildingCode).trim() : null;
+    if (buildingCode !== undefined) updateData.buildingCode = normalizeBuildingCode(buildingCode) || null;
     if (facilityType !== undefined) updateData.facilityType = facilityType ? String(facilityType).trim() : null;
     if (parentProjectId !== undefined) {
       const parentId = parentProjectId ? String(parentProjectId) : null;
@@ -967,12 +1136,19 @@ const handleUpdateProject = async (req: Request, res: Response) => {
       updateData.parentProjectId = parentId;
     }
 
+    const targetBuildingCode = updateData.buildingCode !== undefined
+      ? updateData.buildingCode
+      : existingProject.buildingCode;
+    if (updateData.buildingCode !== undefined && targetBuildingCode && await hasBuildingCode(targetBuildingCode, projectId)) {
+      return res.status(409).json({ error: `Structure code “${normalizeBuildingCode(targetBuildingCode)}” is already used by another project.` });
+    }
+
     if (currentUserId) {
       updateData.updatedByUserId = String(currentUserId);
     }
 
     const updatedProject = await prisma.project.update({
-      where: { id: String(id) },
+      where: { id: projectId },
       data: updateData,
       include: fullProjectInclude,
     });
@@ -980,12 +1156,15 @@ const handleUpdateProject = async (req: Request, res: Response) => {
     const changedFields = ['title', 'projectType', 'location', 'description', 'parentProjectId', 'buildingCode', 'facilityType']
       .filter((field) => (req.body as Record<string, unknown>)[field] !== undefined);
     if (changedFields.length) {
-      await logProjectActivity(String(id), req, 'project.updated', `Updated project details: ${changedFields.join(', ')}`);
+      await logProjectActivity(projectId, req, 'project.updated', `Updated project details: ${changedFields.join(', ')}`);
     }
 
     return res.json(updatedProject);
   } catch (error: any) {
     console.error('Error updating project:', error);
+    if (isBuildingCodeUniqueError(error)) {
+      return res.status(409).json({ error: 'That structure code is already used by another project.' });
+    }
     return res.status(500).json({ error: 'Failed to update project' });
   }
 };
@@ -1051,6 +1230,15 @@ router.delete(
         where: { id: projectId },
       });
 
+      if (existingProject.parentProjectId) {
+        const remainingSiblings = await prisma.project.count({
+          where: { parentProjectId: existingProject.parentProjectId },
+        });
+        if (remainingSiblings === 0) {
+          await ensureStandardProjectPhases(existingProject.parentProjectId);
+        }
+      }
+
       return res.json({ success: true, message: 'Project successfully deleted' });
     } catch (error: any) {
       console.error('Error deleting project:', error);
@@ -1064,7 +1252,21 @@ router.delete(
 // ============================================================================
 // 10. PROJECT PHASE MANAGEMENT (Create, Update, Delete)
 // ============================================================================
-const ENGINEERING_PHASES = ['Concept Design', 'Design Calculation', 'Modeling', 'Sheeting'] as const;
+const ENGINEERING_PHASES = ['Concept Design', 'Design Calculation', 'Modeling', 'Sheeting', 'Done'] as const;
+const ALLOWED_PHASE_STATUSES: PhaseStatus[] = ['NOT_STARTED', 'COMPLETED'];
+
+const ensureStandardProjectPhases = async (projectId: string) => {
+  const existing = await prisma.projectPhase.findMany({ where: { projectId }, select: { name: true } });
+  const existingNames = new Set(existing.map((phase) => phase.name));
+  const missing = ENGINEERING_PHASES
+    .map((name, index) => ({ name, order: index + 1 }))
+    .filter((phase) => !existingNames.has(phase.name));
+  if (missing.length) {
+    await prisma.projectPhase.createMany({
+      data: missing.map((phase) => ({ projectId, ...phase, status: 'NOT_STARTED' })),
+    });
+  }
+};
 
 // Create Phase
 router.post(
@@ -1075,26 +1277,44 @@ router.post(
     try {
       const rawId = req.params.id;
       const projectId = Array.isArray(rawId) ? rawId[0] : String(rawId);
-      const { name, order, status, progressPercent, startDate, endDate, notes } = req.body;
+      const { name, status, progressPercent, startDate, endDate, notes } = req.body;
 
       if (typeof name !== 'string' || !ENGINEERING_PHASES.includes(name as typeof ENGINEERING_PHASES[number])) {
         return res.status(400).json({ error: `Phase must be one of: ${ENGINEERING_PHASES.join(', ')}` });
+      }
+      if (status !== undefined && !ALLOWED_PHASE_STATUSES.includes(status as PhaseStatus)) {
+        return res.status(400).json({ error: 'Phase status must be Not started or Done' });
+      }
+
+      const phaseProject = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { _count: { select: { subProjects: true } } },
+      });
+      if (!phaseProject) return res.status(404).json({ error: 'Project not found' });
+      if (phaseProject._count.subProjects > 0) {
+        return res.status(409).json({ error: 'Phases are tracked on structure packages, not on projects that contain packages.' });
       }
 
       const existingPhase = await prisma.projectPhase.findFirst({ where: { projectId, name } });
       if (existingPhase) return res.status(409).json({ error: `${name} already exists on this project` });
 
-      let phaseOrder = order;
-      if (phaseOrder === undefined) {
-        const count = await prisma.projectPhase.count({ where: { projectId } });
-        phaseOrder = count + 1;
+      if (name === 'Done' && status === 'COMPLETED') {
+        const priorPhases = await prisma.projectPhase.findMany({
+          where: { projectId, name: { in: ENGINEERING_PHASES.slice(0, 4) } },
+          select: { name: true, status: true },
+        });
+        if (priorPhases.length !== 4 || priorPhases.some((phase) => phase.status !== 'COMPLETED')) {
+          return res.status(409).json({ error: 'Complete the four engineering phases before marking the project Done.' });
+        }
       }
+
+      const phaseOrder = ENGINEERING_PHASES.indexOf(name as typeof ENGINEERING_PHASES[number]) + 1;
 
       const phase = await prisma.projectPhase.create({
         data: {
           projectId,
           name,
-          order: Number(phaseOrder),
+          order: phaseOrder,
           status: (status as PhaseStatus) || 'NOT_STARTED',
           ...(progressPercent !== undefined && { progressPercent: Number(progressPercent) }),
           startDate: startDate ? new Date(startDate) : null,
@@ -1123,18 +1343,19 @@ router.patch(
       const phaseId = String(req.params.phaseId);
       const { name, order, status, progressPercent, startDate, endDate, notes } = req.body;
 
+      if (name !== undefined || order !== undefined || progressPercent !== undefined) {
+        return res.status(400).json({ error: 'Standard phase names, order, and weights cannot be changed.' });
+      }
+
       const updateData: any = {};
 
-      if (order !== undefined) updateData.order = Number(order);
-      if (status !== undefined) updateData.status = status as PhaseStatus;
-      if (notes !== undefined) updateData.notes = notes;
-
-      if (progressPercent !== undefined) {
-        const parsedPercent = Number(progressPercent);
-        if (!isNaN(parsedPercent)) {
-          updateData.progressPercent = Math.min(100, Math.max(0, Math.round(parsedPercent)));
+      if (status !== undefined) {
+        if (!ALLOWED_PHASE_STATUSES.includes(status as PhaseStatus)) {
+          return res.status(400).json({ error: 'Phase status must be Not started or Done' });
         }
+        updateData.status = status as PhaseStatus;
       }
+      if (notes !== undefined) updateData.notes = notes;
 
       if (startDate !== undefined) {
         updateData.startDate = startDate ? new Date(startDate) : null;
@@ -1146,25 +1367,59 @@ router.patch(
       const existingPhase = await prisma.projectPhase.findFirst({ where: { id: phaseId, projectId: String(req.params.id) } });
       if (!existingPhase) return res.status(404).json({ error: 'Phase not found in this project' });
 
-      if (name !== undefined) {
-        if (typeof name !== 'string' || !ENGINEERING_PHASES.includes(name as typeof ENGINEERING_PHASES[number])) {
-          return res.status(400).json({ error: `Phase must be one of: ${ENGINEERING_PHASES.join(', ')}` });
-        }
-        const duplicate = await prisma.projectPhase.findFirst({
-          where: { projectId: existingPhase.projectId, name, id: { not: phaseId } },
+      if ((name ?? existingPhase.name) === 'Done' && status === 'COMPLETED') {
+        const priorPhases = await prisma.projectPhase.findMany({
+          where: { projectId: existingPhase.projectId, name: { in: ENGINEERING_PHASES.slice(0, 4) } },
+          select: { name: true, status: true },
         });
-        if (duplicate) return res.status(409).json({ error: `${name} already exists on this project` });
-        updateData.name = name;
+        if (priorPhases.length !== 4 || priorPhases.some((phase) => phase.status !== 'COMPLETED')) {
+          return res.status(409).json({ error: 'Complete the four engineering phases before marking the project Done.' });
+        }
       }
 
-      const updatedPhase = await prisma.projectPhase.update({
-        where: { id: phaseId },
-        data: updateData,
+      if (status === undefined) {
+        const updatedPhase = await prisma.projectPhase.update({
+          where: { id: phaseId },
+          data: updateData,
+        });
+        await logProjectActivity(String(req.params.id), req, 'phase.updated', `Updated phase “${updatedPhase.name}”`);
+        return res.json(updatedPhase);
+      }
+
+      const statusTargets = await prisma.projectPhase.findMany({
+        where: {
+          projectId: existingPhase.projectId,
+          order: status === 'COMPLETED' ? { lte: existingPhase.order } : { gte: existingPhase.order },
+        },
+        select: { id: true, name: true, status: true },
+      });
+      const targetIds = [...new Set([...statusTargets.map((phase) => phase.id), phaseId])];
+      const beforeStatus = new Map(statusTargets.map((phase) => [phase.id, phase.status]));
+      const additionalUpdateData = Object.fromEntries(
+        Object.entries(updateData).filter(([field]) => field !== 'status')
+      );
+
+      const updatedPhases = await prisma.$transaction(async (transaction) => {
+        await transaction.projectPhase.updateMany({
+          where: { id: { in: targetIds } },
+          data: { status: status as PhaseStatus },
+        });
+        if (Object.keys(additionalUpdateData).length > 0) {
+          await transaction.projectPhase.update({ where: { id: phaseId }, data: additionalUpdateData });
+        }
+        return transaction.projectPhase.findMany({ where: { id: { in: targetIds } } });
       });
 
-      await logProjectActivity(String(req.params.id), req, 'phase.updated', `Updated phase “${updatedPhase.name}”`);
+      const changedPhases = updatedPhases.filter((phase) => beforeStatus.get(phase.id) !== phase.status);
+      await Promise.all(changedPhases.map((phase) => logProjectActivity(
+        existingPhase.projectId,
+        req,
+        'phase.updated',
+        `Updated phase “${phase.name}”`
+      )));
 
-      return res.json(updatedPhase);
+      const updatedPhase = updatedPhases.find((phase) => phase.id === phaseId);
+      return res.json({ ...updatedPhase, updatedPhases });
     } catch (error: any) {
       console.error('Error updating phase:', error);
       return res.status(500).json({
