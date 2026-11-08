@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { ProjectRole, PhaseStatus, FileType, FileReviewStatus } from '@prisma/client';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 import path from 'path';
@@ -13,6 +13,7 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { requireProjectRole } from '../middleware/projectAuth.js';
 import { expectedUploadContentType, validatePreviewFilePrefix } from '../services/fileValidation.js';
 import { StorageService } from '../services/storage.js';
+import { getEffectiveProjectRole, getProjectSubtreeIds } from '../services/projectAccess.js';
 
 const router = Router();
 const accessFile = promisify(access);
@@ -112,23 +113,6 @@ const getProjectS3Key = (fileUrl: string, projectId: string): string | null => {
   }
 };
 
-const getEffectiveProjectRole = async (projectId: string, userId: string): Promise<ProjectRole | null> => {
-  let cursor: string | null = projectId;
-  const visited = new Set<string>();
-  while (cursor && !visited.has(cursor)) {
-    visited.add(cursor);
-    const member: { role: ProjectRole } | null = await prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId: cursor, userId } }, select: { role: true },
-    });
-    if (member) return member.role;
-    const project: { parentProjectId: string | null } | null = await prisma.project.findUnique({
-      where: { id: cursor }, select: { parentProjectId: true },
-    });
-    cursor = project?.parentProjectId ?? null;
-  }
-  return null;
-};
-
 /**
  * PERMISSION EVALUATOR: Determines file visibility based on:
  * 1. Global System ADMINs always get access.
@@ -201,60 +185,41 @@ type ProjectProgressNode = {
   subProjects: ProjectProgressNode[];
 };
 
-type ProjectProgressRowNode = {
-  id: string;
-  parentProjectId: string | null;
-  phases: { id: string; name: string; status: PhaseStatus; progressPercent: number; order: number }[];
-  subProjects: ProjectProgressRowNode[];
+const progressNodeSelect = {
+  id: true,
+  parentProjectId: true,
+  phases: {
+    select: { id: true, name: true, status: true, progressPercent: true, order: true },
+    orderBy: { order: 'asc' as const },
+  },
 };
 
-const getProjectProgressTreeIndex = async (): Promise<Map<string, ProjectProgressNode>> => {
-  const rows = await prisma.project.findMany({
-    select: {
-      id: true,
-      parentProjectId: true,
-      phases: {
-        select: { id: true, name: true, status: true, progressPercent: true, order: true },
-        orderBy: { order: 'asc' },
-      },
-    },
-    orderBy: { title: 'asc' },
-  });
-  const nodes = new Map<string, ProjectProgressRowNode>(
-    rows.map((row): [string, ProjectProgressRowNode] => [row.id, { ...row, subProjects: [] }])
-  );
+/**
+ * Builds progress trees for the given root projects and all of their
+ * descendants. Runs one query per tree level instead of loading every project.
+ */
+const getProjectProgressTreeIndex = async (rootIds: string[]): Promise<Map<string, ProjectProgressNode>> => {
+  const nodes = new Map<string, ProjectProgressNode>();
+  let frontier = [...new Set(rootIds)];
+  let where: { id: { in: string[] } } | { parentProjectId: { in: string[] } } = { id: { in: frontier } };
 
-  const wouldCreateCycle = (nodeId: string, parentId: string) => {
-    let cursor: string | null = parentId;
-    const visited = new Set<string>();
-    while (cursor && !visited.has(cursor)) {
-      if (cursor === nodeId) return true;
-      visited.add(cursor);
-      cursor = nodes.get(cursor)?.parentProjectId ?? null;
+  while (frontier.length > 0) {
+    const rows = await prisma.project.findMany({ where, select: progressNodeSelect, orderBy: { title: 'asc' } });
+    const nextFrontier: string[] = [];
+    for (const row of rows) {
+      // The visited check also guards against cyclic parent links.
+      if (nodes.has(row.id)) continue;
+      const node: ProjectProgressNode = { id: row.id, phases: row.phases, subProjects: [] };
+      nodes.set(row.id, node);
+      const parent = row.parentProjectId ? nodes.get(row.parentProjectId) : undefined;
+      if (parent) parent.subProjects.push(node);
+      nextFrontier.push(row.id);
     }
-    return Boolean(cursor);
-  };
-
-  for (const row of rows) {
-    const node = nodes.get(row.id)!;
-    const parent = row.parentProjectId ? nodes.get(row.parentProjectId) : undefined;
-    if (parent && parent.id !== node.id && !wouldCreateCycle(node.id, parent.id)) {
-      parent.subProjects.push(node);
-    }
+    frontier = nextFrontier;
+    where = { parentProjectId: { in: frontier } };
   }
 
-  const publicNodes = new Map<string, ProjectProgressNode>();
-  const exposeTree = (node: ProjectProgressRowNode): ProjectProgressNode => {
-    const existing = publicNodes.get(node.id);
-    if (existing) return existing;
-    const result: ProjectProgressNode = { id: node.id, phases: node.phases, subProjects: [] };
-    publicNodes.set(node.id, result);
-    result.subProjects = node.subProjects.map(exposeTree);
-    return result;
-  };
-
-  for (const node of nodes.values()) exposeTree(node);
-  return publicNodes;
+  return nodes;
 };
 
 // ============================================================================
@@ -292,47 +257,46 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
       });
     }
 
+    // The dashboard only shows a per-user file count, so load just the fields
+    // the visibility rules need and only the current user's membership rows.
+    const userId = getUserId(req) || '';
+    const listInclude = {
+      phases: { orderBy: { order: 'asc' as const } },
+      members: { where: { userId }, select: { role: true } },
+      files: { select: { reviewStatus: true, allowedRoles: true, uploadedByUserId: true } },
+    };
     const projects = await prisma.project.findMany({
       where: conditions.length > 0 ? { AND: conditions } : {},
       include: {
-        ...fullProjectInclude,
+        ...listInclude,
+        createdBy: { select: { id: true, email: true, name: true } },
+        updatedBy: { select: { id: true, email: true, name: true } },
         subProjects: {
-          include: fullProjectInclude,
+          include: listInclude,
           orderBy: { createdAt: 'desc' },
         },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    // Sanitize file lists based on user role / VIEWER fallback permissions
-    const sanitizedProjects = projects.map((p) => {
-      const userMember = p.members.find((m) => m.userId === user.id);
-      const projectRole = userMember?.role || 'VIEWER';
+    type ListFile = (typeof projects)[number]['files'][number];
+    const countVisibleFiles = (files: ListFile[], role: ProjectRole | null) =>
+      files.filter((file) => canViewProjectFile(userRole, role, file, userId)).length;
 
-      const canDownload = canDownloadProjectFiles(userRole, userMember?.role ?? null);
-      const filteredFiles = p.files.filter((f) =>
-        canViewProjectFile(userRole, userMember?.role ?? null, f, getUserId(req) || '')
-      ).map((f) => ({ ...f, fileUrl: canDownload ? f.fileUrl : '' }));
-
-      const sanitizedSubProjects = p.subProjects.map((sub) => {
-        const subMember = sub.members.find((m) => m.userId === user.id) || userMember;
-        const subCanDownload = canDownloadProjectFiles(userRole, subMember?.role ?? null);
-        return {
-          ...sub,
-          files: sub.files.filter((f) =>
-            canViewProjectFile(userRole, subMember?.role ?? null, f, getUserId(req) || '')
-          ).map((f) => ({ ...f, fileUrl: subCanDownload ? f.fileUrl : '' })),
-        };
-      });
-
+    const sanitizedProjects = projects.map(({ members, files, subProjects, ...p }) => {
+      const projectRole = members[0]?.role ?? null;
       return {
         ...p,
-        files: filteredFiles,
-        subProjects: sanitizedSubProjects,
+        fileCount: countVisibleFiles(files, projectRole),
+        subProjects: subProjects.map(({ members: subMembers, files: subFiles, ...sub }) => ({
+          ...sub,
+          // A direct membership on the package wins over the inherited role.
+          fileCount: countVisibleFiles(subFiles, subMembers[0]?.role ?? projectRole),
+        })),
       };
     });
 
-    const progressTrees = await getProjectProgressTreeIndex();
+    const progressTrees = await getProjectProgressTreeIndex(sanitizedProjects.map((project) => project.id));
     res.json(sanitizedProjects.map((project) => ({
       ...project,
       progressTree: progressTrees.get(project.id),
@@ -424,11 +388,7 @@ router.get(
         return res.status(404).json({ error: 'File record not found in database' });
       }
 
-      const member = await prisma.projectMember.findFirst({
-        where: { projectId, userId: user.id || user.userId || user.sub },
-      });
-
-      const effectiveRole = member?.role || await getEffectiveProjectRole(projectId, user.id || user.userId || user.sub || '');
+      const effectiveRole = await getEffectiveProjectRole(projectId, getUserId(req) || '');
 
       if (!canDownloadProjectFiles(user.role, effectiveRole)) {
         return res.status(403).json({ error: 'Downloads are available to admins and assigned editor team members only' });
@@ -639,18 +599,16 @@ router.get(
         return;
       }
 
-      if (project.isArchived && userRole !== 'ADMIN') {
-        const effectiveRole = await getEffectiveProjectRole(project.id, user?.id || user?.userId || user?.sub || '');
-        const isAssigned = Boolean(effectiveRole);
-        if (!isAssigned) {
-          res.status(403).json({ error: 'Access denied. This project is archived.' });
-          return;
-        }
+      const userId = getUserId(req) || '';
+      const effectiveRole = await getEffectiveProjectRole(project.id, userId);
+
+      if (project.isArchived && userRole !== 'ADMIN' && !effectiveRole) {
+        res.status(403).json({ error: 'Access denied. This project is archived.' });
+        return;
       }
 
       const currentUserMember = project.members.find((m) => m.userId === user.id);
       const userProjectRole = currentUserMember?.role || 'VIEWER';
-      const effectiveRole = await getEffectiveProjectRole(project.id, user.id || user.userId || user.sub || '');
       const canDownload = canDownloadProjectFiles(user.role, effectiveRole);
 
       const accessibleFiles = project.files.filter((f) =>
@@ -680,19 +638,21 @@ router.get(
         })
       );
 
-      const sanitizedSubProjects = await Promise.all(project.subProjects.map(async (subProject) => {
-        const subRole = await getEffectiveProjectRole(subProject.id, getUserId(req) || '');
+      // A sub-project's role is the user's direct membership on it, otherwise
+      // the role inherited from this project, so no extra queries are needed.
+      const sanitizedSubProjects = project.subProjects.map((subProject) => {
+        const subRole = subProject.members.find((m) => m.userId === userId)?.role ?? effectiveRole;
         const subCanDownload = canDownloadProjectFiles(user.role, subRole);
         const visibleFiles = subProject.files.filter((file) =>
-          canViewProjectFile(user.role, subRole, file, getUserId(req) || '')
+          canViewProjectFile(user.role, subRole, file, userId)
         ).map((file) => ({
           ...file,
-          fileUrl: canDownloadProjectFiles(user.role, subRole) ? file.fileUrl : '',
+          fileUrl: subCanDownload ? file.fileUrl : '',
           downloadUrl: '',
         }));
         return { ...subProject, files: visibleFiles };
-      }));
-      const progressTrees = await getProjectProgressTreeIndex();
+      });
+      const progressTrees = await getProjectProgressTreeIndex([project.id]);
 
       res.json({
         ...project,
@@ -919,7 +879,7 @@ router.post(
 
       const validAllowedRoles: ProjectRole[] =
         Array.isArray(allowedRoles) && allowedRoles.length > 0
-          ? allowedRoles
+          ? [...new Set<ProjectRole>(allowedRoles)]
           : ['VIEWER' as ProjectRole];
       if (validAllowedRoles.some((role) => !['MANAGER', 'EDITOR', 'VIEWER'].includes(role))) {
         await discardUploadedObject(s3Key);
@@ -1080,7 +1040,7 @@ router.patch(
       const updatedFile = await prisma.projectFile.update({
         where: { id: fileId },
         data: {
-          allowedRoles: allowedRoles as ProjectRole[],
+          allowedRoles: [...new Set(allowedRoles as ProjectRole[])],
         } as any,
       });
 
@@ -1191,34 +1151,41 @@ router.delete(
         return res.status(404).json({ error: 'Project not found' });
       }
 
-      const tree: Array<{ id: string; files: Array<{ fileUrl: string }> }> = [];
-      const visited = new Set<string>();
-      const collectProjectFiles = async (currentId: string): Promise<void> => {
-        if (visited.has(currentId)) return;
-        visited.add(currentId);
-        const current = await prisma.project.findUnique({
-          where: { id: currentId },
-          select: { id: true, files: { select: { fileUrl: true } }, subProjects: { select: { id: true } } },
-        });
-        if (!current) return;
-        tree.push({ id: current.id, files: current.files });
-        for (const child of current.subProjects) await collectProjectFiles(child.id);
-      };
-      await collectProjectFiles(projectId);
+      // Load every file in the project and its descendants in two queries.
+      const subtreeIds = await getProjectSubtreeIds(projectId);
+      const subtreeFiles = await prisma.projectFile.findMany({
+        where: { projectId: { in: subtreeIds } },
+        select: { projectId: true, fileUrl: true },
+      });
+
+      // Check every storage reference before deleting anything, so a bad
+      // reference can't leave the project half cleaned up.
+      const localFiles: string[] = [];
+      const s3Keys: string[] = [];
+      for (const file of subtreeFiles) {
+        if (file.fileUrl.startsWith('/uploads/')) {
+          localFiles.push(file.fileUrl);
+          continue;
+        }
+        const key = getProjectS3Key(file.fileUrl, file.projectId);
+        if (!key) {
+          console.error('Project deletion stopped: file has an invalid storage reference', file.projectId);
+          return res.status(409).json({ error: 'A project file has an invalid storage reference; contact an administrator before deleting this project.' });
+        }
+        s3Keys.push(key);
+      }
 
       try {
-        for (const project of tree) {
-          for (const file of project.files) {
-            if (file.fileUrl.startsWith('/uploads/')) {
-              await StorageService.deleteFile(file.fileUrl);
-              continue;
-            }
-            const key = getProjectS3Key(file.fileUrl, project.id);
-            if (!key) {
-              console.error('Project deletion stopped: file has an invalid storage reference', project.id);
-              return res.status(409).json({ error: 'A project file has an invalid storage reference; contact an administrator before deleting this project.' });
-            }
-            await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME!, Key: key }));
+        await Promise.all(localFiles.map((fileUrl) => StorageService.deleteFile(fileUrl)));
+        // S3 accepts up to 1,000 keys per batch delete request.
+        for (let start = 0; start < s3Keys.length; start += 1000) {
+          const batch = s3Keys.slice(start, start + 1000);
+          const result = await s3Client.send(new DeleteObjectsCommand({
+            Bucket: process.env.AWS_S3_BUCKET_NAME!,
+            Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true },
+          }));
+          if (result.Errors?.length) {
+            throw new Error(`S3 could not delete ${result.Errors.length} object(s), first: ${result.Errors[0].Key} (${result.Errors[0].Code})`);
           }
         }
       } catch (storageError) {

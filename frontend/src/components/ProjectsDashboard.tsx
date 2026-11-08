@@ -267,9 +267,9 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                 const isExpanded = !!expandedProjects[project.id];
 
                 // Calculate cumulative total assets (parent + sub-projects)
-                const directFilesCount = project.files?.length || 0;
+                const directFilesCount = project.fileCount ?? project.files?.length ?? 0;
                 const subProjectsFilesCount = project.subProjects?.reduce(
-                  (acc, sub) => acc + (sub.files?.length || 0),
+                  (acc, sub) => acc + (sub.fileCount ?? sub.files?.length ?? 0),
                   0
                 ) || 0;
                 const totalAssets = directFilesCount + subProjectsFilesCount;

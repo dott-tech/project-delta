@@ -8,23 +8,10 @@ import { uploadMiddleware } from '../middleware/upload.js';
 import { StorageService } from '../services/storage.js';
 import { FileType } from '@prisma/client';
 import { validateLocalPreviewFile } from '../services/fileValidation.js';
+import { getEffectiveProjectRole } from '../services/projectAccess.js';
 
 const router = Router();
 
-async function getEffectiveProjectRole(projectId: string, userId: string): Promise<string | null> {
-  let cursor: string | null = projectId;
-  const visited = new Set<string>();
-  while (cursor && !visited.has(cursor)) {
-    visited.add(cursor);
-    const membership = await prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId: cursor, userId } }, select: { role: true },
-    });
-    if (membership) return membership.role;
-    const project: { parentProjectId: string | null } | null = await prisma.project.findUnique({ where: { id: cursor }, select: { parentProjectId: true } });
-    cursor = project?.parentProjectId ?? null;
-  }
-  return null;
-}
 
 async function recordFileActivity(projectId: string, userId: string | undefined, action: string, details: string) {
   try {

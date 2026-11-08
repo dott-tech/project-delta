@@ -4,7 +4,8 @@ import { api } from '../api/client';
 import type { ProjectActivity } from '../types/project';
 import { getApiErrorMessage } from '../utils/apiError';
 
-export const ProjectActivityLog: React.FC<{ projectId: string }> = ({ projectId }) => {
+// Bump refreshKey after a change on the page to reload the log in place.
+export const ProjectActivityLog: React.FC<{ projectId: string; refreshKey?: number }> = ({ projectId, refreshKey = 0 }) => {
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -19,7 +20,7 @@ export const ProjectActivityLog: React.FC<{ projectId: string }> = ({ projectId 
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps -- refreshKey only triggers a reload
 
   const refreshActivities = async () => {
     setLoading(true);

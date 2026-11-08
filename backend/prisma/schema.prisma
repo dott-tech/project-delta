@@ -82,6 +82,8 @@ model Project {
   files        ProjectFile[]
   replitEmbeds ReplitEmbed[]
   activities   ProjectActivity[]
+
+  @@index([parentProjectId, isArchived])
 }
 
 model ProjectActivity {
@@ -110,6 +112,8 @@ model ProjectPhase {
   notes           String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
+
+  @@index([projectId, order])
 }
 
 model ProjectMember {
@@ -122,6 +126,7 @@ model ProjectMember {
   createdAt DateTime    @default(now())
 
   @@unique([projectId, userId])
+  @@index([userId])
 }
 
 model ProjectFile {
@@ -134,6 +139,8 @@ model ProjectFile {
   fileSize     Int?
   allowedRoles ProjectRole[] @default([ADMIN])
   createdAt    DateTime      @default(now())
+
+  @@index([projectId])
 }
 
 model ReplitEmbed {

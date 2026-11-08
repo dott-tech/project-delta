@@ -85,6 +85,8 @@ export interface Project {
   createdBy?: { id: string; name: string; email: string };
   updatedBy?: { id: string; name: string; email: string } | null;
   files?: ProjectFile[];
+  /** Files visible to the current user; sent by the project list instead of `files`. */
+  fileCount?: number;
   phases?: ProjectPhase[];
   subProjects?: Project[];
   progressTree?: ProjectProgressNode;

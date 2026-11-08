@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ProjectRole } from '@prisma/client';
-import { prisma } from '../db.js'; // Use your exported instance from db.ts
+import { findEffectiveMembership } from '../services/projectAccess.js';
 
 // Role hierarchy levels for comparison
 const ROLE_HIERARCHY: Record<ProjectRole, number> = {
@@ -53,21 +53,7 @@ export const requireProjectRole = (requiredRole: ProjectRole) => {
 
       // A membership on a parent project also grants the same project role to
       // its nested packages unless the user has a direct package assignment.
-      let currentProjectId: string | null = projectId;
-      let membership = null as Awaited<ReturnType<typeof prisma.projectMember.findUnique>>;
-      const visited = new Set<string>();
-      while (currentProjectId && !visited.has(currentProjectId)) {
-        visited.add(currentProjectId);
-        membership = await prisma.projectMember.findUnique({
-          where: { projectId_userId: { projectId: currentProjectId, userId } },
-        });
-        if (membership) break;
-        const currentProject: { parentProjectId: string | null } | null = await prisma.project.findUnique({
-          where: { id: currentProjectId },
-          select: { parentProjectId: true },
-        });
-        currentProjectId = currentProject?.parentProjectId ?? null;
-      }
+      const membership = await findEffectiveMembership(projectId, String(userId));
 
       if (!membership) {
         return res.status(403).json({ 

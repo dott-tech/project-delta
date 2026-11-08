@@ -157,10 +157,26 @@ export const ProjectDetailView: React.FC<Props> = ({
     }
   }, [projectId]);
 
-  const refreshProject = () => {
-    setLoading(true);
-    setError(null);
-    void fetchProject();
+  const [activityVersion, setActivityVersion] = useState(0);
+
+  // After an action: reload the activity log and, when the change needs fresh
+  // server data (new rows or signed download links), refetch the project
+  // in the background without swapping the page for the loading screen.
+  const refreshAfterChange = (options: { refetchProject?: boolean } = {}) => {
+    setActivityVersion((version) => version + 1);
+    if (options.refetchProject) void fetchProject();
+  };
+
+  const patchProjectFile = (updated: ProjectFile) => {
+    setProject((current) => current
+      ? {
+          ...current,
+          files: current.files?.map((file) => file.id === updated.id
+            // Keep the sanitized URL and signed link the detail fetch produced.
+            ? { ...file, ...updated, fileUrl: file.fileUrl, downloadUrl: file.downloadUrl }
+            : file),
+        }
+      : current);
   };
 
   useEffect(() => {
@@ -231,7 +247,7 @@ export const ProjectDetailView: React.FC<Props> = ({
       });
       window.dispatchEvent(new Event('project-directory-refresh'));
       setShowEditProjectModal(false);
-      refreshProject();
+      refreshAfterChange({ refetchProject: true });
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to update project details'));
     } finally {
@@ -271,7 +287,7 @@ export const ProjectDetailView: React.FC<Props> = ({
 
       window.dispatchEvent(new Event('project-directory-refresh'));
       setShowBuildingModal(false);
-      refreshProject();
+      refreshAfterChange({ refetchProject: true });
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to create building package'));
     } finally {
@@ -347,7 +363,7 @@ export const ProjectDetailView: React.FC<Props> = ({
 
     try {
       await api.delete(`/projects/${projectId}/members/${userId}`);
-      refreshProject();
+      refreshAfterChange({ refetchProject: true });
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to remove team member'));
     }
@@ -369,6 +385,7 @@ export const ProjectDetailView: React.FC<Props> = ({
             phases: current.phases?.map((phase) => ({ ...phase, ...(updatedById.get(phase.id) || {}) })),
           }
         : current);
+      refreshAfterChange();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to update phase status'));
     }
@@ -387,7 +404,7 @@ export const ProjectDetailView: React.FC<Props> = ({
       setMemberUserId('');
       setEditingMember(null);
       setShowMemberModal(false);
-      refreshProject();
+      refreshAfterChange({ refetchProject: true });
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to assign or update team member role'));
     }
@@ -421,7 +438,7 @@ export const ProjectDetailView: React.FC<Props> = ({
         allowedRoles: selectedFileRoles.length > 0 ? selectedFileRoles : ['VIEWER'],
       });
 
-      refreshProject();
+      refreshAfterChange({ refetchProject: true });
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'File upload failed'));
     } finally {
@@ -432,8 +449,9 @@ export const ProjectDetailView: React.FC<Props> = ({
 
   const handleSubmitFileForReview = async (file: ProjectFile) => {
     try {
-      await api.post(`/projects/${projectId}/files/${file.id}/submit-review`);
-      refreshProject();
+      const { data } = await api.post<ProjectFile>(`/projects/${projectId}/files/${file.id}/submit-review`);
+      patchProjectFile(data);
+      refreshAfterChange();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to submit file for review'));
     }
@@ -448,13 +466,14 @@ export const ProjectDetailView: React.FC<Props> = ({
 
     try {
       setSavingReview(true);
-      await api.post(`/projects/${projectId}/files/${reviewingFile.id}/review`, {
+      const { data } = await api.post<ProjectFile>(`/projects/${projectId}/files/${reviewingFile.id}/review`, {
         decision,
         comment: reviewComment,
       });
+      patchProjectFile(data);
       setReviewingFile(null);
       setReviewComment('');
-      refreshProject();
+      refreshAfterChange();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, `Failed to ${decision.toLowerCase()} file`));
     } finally {
@@ -472,11 +491,12 @@ export const ProjectDetailView: React.FC<Props> = ({
 
     try {
       setSavingFilePermissions(true);
-      await api.patch(`/projects/${projectId}/files/${editingFile.id}/permissions`, {
+      const { data } = await api.patch<{ file: ProjectFile }>(`/projects/${projectId}/files/${editingFile.id}/permissions`, {
         allowedRoles: editingFile.roles,
       });
+      patchProjectFile(data.file);
       setEditingFile(null);
-      refreshProject();
+      refreshAfterChange();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to update file permissions.'));
     } finally {
@@ -489,7 +509,10 @@ export const ProjectDetailView: React.FC<Props> = ({
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
       await api.delete(`/projects/${projectId}/files/${fileId}`);
-      refreshProject();
+      setProject((current) => current
+        ? { ...current, files: current.files?.filter((file) => file.id !== fileId) }
+        : current);
+      refreshAfterChange();
     } catch (err: unknown) {
       alert(getApiErrorMessage(err, 'Failed to delete file'));
     }
@@ -966,7 +989,7 @@ export const ProjectDetailView: React.FC<Props> = ({
           </div>
           {user?.role !== 'CLIENT' && (
             <div className="w-full min-w-0">
-              <ProjectActivityLog projectId={projectId} />
+              <ProjectActivityLog projectId={projectId} refreshKey={activityVersion} />
             </div>
           )}
         </div>}
