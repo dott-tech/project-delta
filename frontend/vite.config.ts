@@ -9,6 +9,10 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
+    // The S3 bucket's CORS rules only allow this origin, so fail instead of
+    // silently moving to another port where uploads would be blocked.
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
