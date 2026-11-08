@@ -518,26 +518,8 @@ export const ProjectDetailView: React.FC<Props> = ({
     }
   };
 
-  const handleDownloadFile = async (file: ProjectFile) => {
-    if (!file) return;
-    if (file.fileUrl?.startsWith('/uploads/')) {
-      try {
-        const response = await api.get(`/files/${file.id}/download`, { responseType: 'blob' });
-        const objectUrl = URL.createObjectURL(response.data);
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = file.fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(objectUrl);
-      } catch (err: unknown) {
-        alert(getApiErrorMessage(err, 'File download failed'));
-      }
-      return;
-    }
-    const downloadUrl = file.downloadUrl;
-    if (downloadUrl) window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+  const handleDownloadFile = (file: ProjectFile) => {
+    if (file.downloadUrl) window.open(file.downloadUrl, '_blank', 'noopener,noreferrer');
   };
 
   const handlePreviewFile = async (file: ProjectFile) => {

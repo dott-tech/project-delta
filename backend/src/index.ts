@@ -1,13 +1,10 @@
-// backend/src/index.ts
 import 'dotenv/config';
 import express, { NextFunction, Request, Response } from 'express';
-import multer from 'multer';
 import cors from 'cors';
 import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
-import fileRoutes from './routes/files.js';
 import { prisma } from './db.js';
-import userRoutes from './routes/user.js'; // 👈 Added .js extension
+import userRoutes from './routes/user.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -44,11 +41,11 @@ app.use((_req, res, next) => {
 app.use(express.json({ limit: '1mb' }));
 
 // Routes
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (_req: Request, res: Response) => {
   res.send('Structural Hub API is live!');
 });
 
-app.get('/api/health', async (req: Request, res: Response) => {
+app.get('/api/health', async (_req: Request, res: Response) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ status: 'ok', message: 'Server and Database are healthy!' });
@@ -61,7 +58,6 @@ app.get('/api/health', async (req: Request, res: Response) => {
 // Register API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
-app.use('/api', fileRoutes);
 app.use('/api/users', userRoutes);
 
 app.use((_req: Request, res: Response) => {
@@ -70,12 +66,14 @@ app.use((_req: Request, res: Response) => {
 
 app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(error);
-  const uploadError = error instanceof multer.MulterError;
-  const status = uploadError && error.code === 'LIMIT_FILE_SIZE' ? 413
-    : uploadError || (error instanceof Error && error.message.startsWith('File type .')) ? 400
-      : 500;
+  // express.json() marks malformed or oversized bodies with a 4xx status.
+  const errorStatus = (error as { status?: unknown } | null)?.status;
+  if (typeof errorStatus === 'number' && errorStatus >= 400 && errorStatus < 500) {
+    res.status(errorStatus).json({ error: 'Invalid request' });
+    return;
+  }
   console.error('Unhandled API error:', error);
-  res.status(status).json({ error: status === 500 ? 'Internal server error' : status === 413 ? 'Uploaded file exceeds the 200 MB limit' : 'Invalid request' });
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start Server

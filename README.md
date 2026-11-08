@@ -62,11 +62,9 @@ Rate limits currently use per-process memory. Before running multiple API instan
 
 ## File storage
 
-The project detail upload flow uses private S3 objects and short-lived signed upload/download URLs. Configure `AWS_REGION` and `AWS_S3_BUCKET_NAME`; credentials are resolved using the AWS SDK default provider chain (environment credentials, shared profile, or workload role). Configure the bucket CORS policy to allow `PUT` from the frontend origin and the `Content-Type` header. Files are limited to 50 MB and the supported types are PDF, CAD/BIM formats, common images, DOC/DOCX, and XLSX.
+The project detail upload flow uses private S3 objects and short-lived signed upload/download URLs. Configure `AWS_REGION` and `AWS_S3_BUCKET_NAME`; credentials are resolved using the AWS SDK default provider chain (environment credentials, shared profile, or workload role). Configure the bucket CORS policy to allow `PUT` from the frontend origin (locally `http://localhost:5173`, which the Vite dev server is pinned to) and the `Content-Type` header. Files are limited to 200 MB and the supported types are PDF, CAD/BIM formats, common images, Office documents, CSV, TXT and RTF.
 
-Visible PDF and image files can be previewed inside the project workspace through an authenticated streaming endpoint. Previews do not expose S3 URLs; file downloads remain limited to admins and assigned editor team members.
-
-The older multipart endpoint stores files locally under `backend/uploads`; local files are delivered through an authenticated API route. Do not expose that directory with a public static file server.
+Visible PDF, image, CSV and text files can be previewed inside the project workspace through an authenticated streaming endpoint. Previews do not expose S3 URLs; file downloads remain limited to admins and assigned editor team members.
 
 ## Checks
 

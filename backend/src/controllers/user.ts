@@ -1,9 +1,8 @@
-// backend/src/controllers/user.ts
 import { Request, Response } from 'express';
-import { prisma } from '../db'; // 👈 Point to the correct db instance
+import { prisma } from '../db.js';
 
 // GET /api/users - List all users (Admin Only)
-export const getAllUsers = async (req: Request, res: Response) => {
+export const getAllUsers = async (_req: Request, res: Response) => {
   try {
     const users = await prisma.user.findMany({
       select: {

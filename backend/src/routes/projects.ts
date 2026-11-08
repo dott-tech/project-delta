@@ -4,19 +4,15 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, 
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 import path from 'path';
-import { access, constants, createReadStream } from 'fs';
 import { Transform, Writable } from 'stream';
-import { promisify } from 'util';
 import { pipeline } from 'stream/promises';
 import { prisma } from '../db.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { requireProjectRole } from '../middleware/projectAuth.js';
 import { expectedUploadContentType, validatePreviewFilePrefix } from '../services/fileValidation.js';
-import { StorageService } from '../services/storage.js';
 import { getEffectiveProjectRole, getProjectSubtreeIds } from '../services/projectAccess.js';
 
 const router = Router();
-const accessFile = promisify(access);
 const discardUploadedObject = async (key: string) => {
   try {
     await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME!, Key: key }));
@@ -368,60 +364,6 @@ router.get('/navigation', authenticateToken, async (_req: Request, res: Response
   }
 });
 
-// ============================================================================
-// 2. GENERATE PRESIGNED S3 DOWNLOAD URL FOR A FILE
-// ============================================================================
-router.get(
-  '/:projectId/files/:fileId/download-url',
-  authenticateToken,
-  requireProjectRole('VIEWER'),
-  async (req: Request, res: Response) => {
-    try {
-      const user = (req as any).user;
-      const rawFileId = req.params.fileId;
-      const fileId = Array.isArray(rawFileId) ? rawFileId[0] : String(rawFileId);
-      const projectId = Array.isArray(req.params.projectId) ? req.params.projectId[0] : String(req.params.projectId);
-
-      const file = await prisma.projectFile.findFirst({ where: { id: fileId, projectId } });
-
-      if (!file) {
-        return res.status(404).json({ error: 'File record not found in database' });
-      }
-
-      const effectiveRole = await getEffectiveProjectRole(projectId, getUserId(req) || '');
-
-      if (!canDownloadProjectFiles(user.role, effectiveRole)) {
-        return res.status(403).json({ error: 'Downloads are available to admins and assigned editor team members only' });
-      }
-
-      if (file.reviewStatus !== 'APPROVED' && file.uploadedByUserId !== getUserId(req) && user.role !== 'ADMIN') {
-        return res.status(403).json({ error: 'Unapproved drafts can only be downloaded by their uploader or a system admin' });
-      }
-
-      let downloadUrl = file.fileUrl;
-      if (file.fileUrl) {
-        const s3Key = getProjectS3Key(file.fileUrl, projectId);
-        if (!s3Key) return res.status(404).json({ error: 'File storage reference is invalid' });
-
-        const command = new GetObjectCommand({
-          Bucket: process.env.AWS_S3_BUCKET_NAME!,
-          Key: s3Key,
-          ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
-        });
-
-        downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
-      }
-
-      return res.json({ downloadUrl, fileName: file.fileName });
-    } catch (error: any) {
-      console.error('Error generating presigned download URL:', error);
-      return res.status(500).json({
-        error: 'Failed to generate download link',
-      });
-    }
-  }
-);
-
 // Stream only safe inline-preview formats through the authenticated API. This
 // keeps client previews available without exposing the storage URL or a signed
 // download URL to the browser.
@@ -467,24 +409,11 @@ router.get(
       if (['.txt', '.csv'].includes(extension) && (file.fileSize || 0) > 2 * 1024 * 1024) {
         return res.status(413).json({ error: 'Text and CSV previews are limited to 2 MB' });
       }
-      let previewStream: NodeJS.ReadableStream;
-      if (file.fileUrl.startsWith('/uploads/')) {
-        const uploadsRoot = path.resolve(process.cwd(), 'uploads');
-        const filePath = path.resolve(uploadsRoot, path.basename(file.fileUrl));
-        if (!filePath.startsWith(uploadsRoot + path.sep)) return res.status(400).json({ error: 'Invalid file path' });
-        try {
-          await accessFile(filePath, constants.R_OK);
-        } catch {
-          return res.status(404).json({ error: 'Preview file was not found in storage' });
-        }
-        previewStream = createReadStream(filePath);
-      } else {
-        const s3Key = getProjectS3Key(file.fileUrl, projectId);
-        if (!s3Key) return res.status(404).json({ error: 'File storage reference is invalid' });
-        const object = await s3Client.send(new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME!, Key: s3Key }));
-        if (!object.Body) return res.status(404).json({ error: 'Preview file was not found in storage' });
-        previewStream = object.Body as NodeJS.ReadableStream;
-      }
+      const s3Key = getProjectS3Key(file.fileUrl, projectId);
+      if (!s3Key) return res.status(404).json({ error: 'File storage reference is invalid' });
+      const object = await s3Client.send(new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME!, Key: s3Key }));
+      if (!object.Body) return res.status(404).json({ error: 'Preview file was not found in storage' });
+      const previewStream = object.Body as NodeJS.ReadableStream;
 
       // Return a JSON envelope containing base64 data instead of a raw PDF or
       // image response. Some download-manager browser integrations intercept
@@ -1130,7 +1059,6 @@ const handleUpdateProject = async (req: Request, res: Response) => {
 };
 
 router.patch('/:id', authenticateToken, requireProjectRole('MANAGER'), handleUpdateProject);
-router.put('/:id', authenticateToken, requireProjectRole('MANAGER'), handleUpdateProject);
 
 // ============================================================================
 // 9. DELETE PROJECT (Manager Only)
@@ -1160,13 +1088,8 @@ router.delete(
 
       // Check every storage reference before deleting anything, so a bad
       // reference can't leave the project half cleaned up.
-      const localFiles: string[] = [];
       const s3Keys: string[] = [];
       for (const file of subtreeFiles) {
-        if (file.fileUrl.startsWith('/uploads/')) {
-          localFiles.push(file.fileUrl);
-          continue;
-        }
         const key = getProjectS3Key(file.fileUrl, file.projectId);
         if (!key) {
           console.error('Project deletion stopped: file has an invalid storage reference', file.projectId);
@@ -1176,7 +1099,6 @@ router.delete(
       }
 
       try {
-        await Promise.all(localFiles.map((fileUrl) => StorageService.deleteFile(fileUrl)));
         // S3 accepts up to 1,000 keys per batch delete request.
         for (let start = 0; start < s3Keys.length; start += 1000) {
           const batch = s3Keys.slice(start, start + 1000);
@@ -1217,7 +1139,7 @@ router.delete(
 );
 
 // ============================================================================
-// 10. PROJECT PHASE MANAGEMENT (Create, Update, Delete)
+// 10. PROJECT PHASES (fixed standard workflow; status updates only)
 // ============================================================================
 const ENGINEERING_PHASES = ['Concept Design', 'Design Calculation', 'Modeling', 'Sheeting', 'Done'] as const;
 const ALLOWED_PHASE_STATUSES: PhaseStatus[] = ['NOT_STARTED', 'COMPLETED'];
@@ -1234,71 +1156,6 @@ const ensureStandardProjectPhases = async (projectId: string) => {
     });
   }
 };
-
-// Create Phase
-router.post(
-  '/:id/phases',
-  authenticateToken,
-  requireProjectRole('EDITOR'),
-  async (req: Request, res: Response) => {
-    try {
-      const rawId = req.params.id;
-      const projectId = Array.isArray(rawId) ? rawId[0] : String(rawId);
-      const { name, status, progressPercent, startDate, endDate, notes } = req.body;
-
-      if (typeof name !== 'string' || !ENGINEERING_PHASES.includes(name as typeof ENGINEERING_PHASES[number])) {
-        return res.status(400).json({ error: `Phase must be one of: ${ENGINEERING_PHASES.join(', ')}` });
-      }
-      if (status !== undefined && !ALLOWED_PHASE_STATUSES.includes(status as PhaseStatus)) {
-        return res.status(400).json({ error: 'Phase status must be Not started or Done' });
-      }
-
-      const phaseProject = await prisma.project.findUnique({
-        where: { id: projectId },
-        select: { _count: { select: { subProjects: true } } },
-      });
-      if (!phaseProject) return res.status(404).json({ error: 'Project not found' });
-      if (phaseProject._count.subProjects > 0) {
-        return res.status(409).json({ error: 'Phases are tracked on structure packages, not on projects that contain packages.' });
-      }
-
-      const existingPhase = await prisma.projectPhase.findFirst({ where: { projectId, name } });
-      if (existingPhase) return res.status(409).json({ error: `${name} already exists on this project` });
-
-      if (name === 'Done' && status === 'COMPLETED') {
-        const priorPhases = await prisma.projectPhase.findMany({
-          where: { projectId, name: { in: ENGINEERING_PHASES.slice(0, 4) } },
-          select: { name: true, status: true },
-        });
-        if (priorPhases.length !== 4 || priorPhases.some((phase) => phase.status !== 'COMPLETED')) {
-          return res.status(409).json({ error: 'Complete the four engineering phases before marking the project Done.' });
-        }
-      }
-
-      const phaseOrder = ENGINEERING_PHASES.indexOf(name as typeof ENGINEERING_PHASES[number]) + 1;
-
-      const phase = await prisma.projectPhase.create({
-        data: {
-          projectId,
-          name,
-          order: phaseOrder,
-          status: (status as PhaseStatus) || 'NOT_STARTED',
-          ...(progressPercent !== undefined && { progressPercent: Number(progressPercent) }),
-          startDate: startDate ? new Date(startDate) : null,
-          endDate: endDate ? new Date(endDate) : null,
-          notes,
-        },
-      });
-
-      await logProjectActivity(projectId, req, 'phase.created', `Added phase “${phase.name}”`);
-
-      return res.status(201).json(phase);
-    } catch (error: any) {
-      console.error('Error creating phase:', error);
-      return res.status(500).json({ error: 'Failed to create phase' });
-    }
-  }
-);
 
 // Update Phase
 router.patch(
@@ -1392,25 +1249,6 @@ router.patch(
       return res.status(500).json({
         error: 'Failed to update phase',
       });
-    }
-  }
-);
-
-// Delete Phase
-router.delete(
-  '/:id/phases/:phaseId',
-  authenticateToken,
-  requireProjectRole('MANAGER'),
-  async (req: Request, res: Response) => {
-    try {
-      const phaseId = String(req.params.phaseId);
-
-      const phase = await prisma.projectPhase.findFirst({ where: { id: phaseId, projectId: String(req.params.id) } });
-      if (!phase) return res.status(404).json({ error: 'Phase not found in this project' });
-      return res.status(409).json({ error: 'Standard project phases cannot be deleted' });
-    } catch (error: any) {
-      console.error('Error deleting phase:', error);
-      return res.status(500).json({ error: 'Failed to delete phase' });
     }
   }
 );

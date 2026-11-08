@@ -1,5 +1,3 @@
-import fs from 'fs/promises';
-
 const imageSignatures: Record<string, (bytes: Buffer) => boolean> = {
   png: (b) => b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
   jpg: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
@@ -27,17 +25,6 @@ export const validatePreviewFilePrefix = (fileName: string, bytes: Buffer): bool
   if (extension === 'rvt' || extension === 'doc') return isOle;
   if (extension === 'docx' || extension === 'xlsx') return isZip;
   return true;
-};
-
-export const validateLocalPreviewFile = async (filePath: string, fileName: string): Promise<boolean> => {
-  const handle = await fs.open(filePath, 'r');
-  try {
-    const bytes = Buffer.alloc(32);
-    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-    return validatePreviewFilePrefix(fileName, bytes.subarray(0, bytesRead));
-  } finally {
-    await handle.close();
-  }
 };
 
 export const expectedUploadContentType = (fileName: string): string => {

@@ -49,19 +49,11 @@ const EditProjectModalForm: React.FC<EditProjectModalProps> = ({
     };
 
     try {
-      // Try PUT update endpoint
-      await api.put(`/projects/${project.id}`, payload);
+      await api.patch(`/projects/${project.id}`, payload);
       onSuccess();
       onClose();
-    } catch (putErr: unknown) {
-      // Fallback to PATCH if PUT route is not implemented on backend
-      try {
-        await api.patch(`/projects/${project.id}`, payload);
-        onSuccess();
-        onClose();
-      } catch (patchErr: unknown) {
-        setError(getApiErrorMessage(patchErr, getApiErrorMessage(putErr, 'Failed to update project details.')));
-      }
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to update project details.'));
     } finally {
       setLoading(false);
     }
