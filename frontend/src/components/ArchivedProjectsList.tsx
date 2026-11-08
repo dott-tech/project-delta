@@ -108,7 +108,7 @@ export const ArchivedProjectsList: React.FC<Props> = ({ onSelectProject }) => {
       ) : (
         /* Archive Table */
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm border-collapse">
+          <table className="responsive-table w-full text-left text-sm border-collapse">
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
                 <th className="py-3 px-4">Project Title</th>
@@ -124,11 +124,11 @@ export const ArchivedProjectsList: React.FC<Props> = ({ onSelectProject }) => {
                   onClick={() => onSelectProject?.(project.id)}
                   className="hover:bg-slate-800/30 transition cursor-pointer"
                 >
-                  <td className="py-3.5 px-4 font-medium text-white">{project.title}</td>
-                  <td className="py-3.5 px-4 text-xs text-slate-400">{project.projectType}</td>
-                  <td className="py-3.5 px-4 text-slate-300 text-xs">{project.location}</td>
-                  <td className="py-3.5 px-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                  <td data-label="Project" className="py-3.5 px-4 font-medium text-white">{project.title}</td>
+                  <td data-label="Type" className="py-3.5 px-4 text-xs text-slate-400">{project.projectType}</td>
+                  <td data-label="Location" className="py-3.5 px-4 text-slate-300 text-xs">{project.location}</td>
+                  <td data-label="Actions" className="py-3.5 px-4 text-right">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       {onSelectProject && (
                         <button
                           onClick={(e) => {

@@ -1253,9 +1253,11 @@ body { color: var(--ink); background: var(--page-paper); }
 .app-shell .fixed.inset-0[class*="bg-black/"] > div button[class~="bg-blue-500"]:hover { box-shadow: 0 8px 24px rgba(110,108,220,.34) !important; }
 
 /* Keep the live status and portfolio metrics within the dashboard hero. */
-.app-shell:has(.dashboard-page) .dashboard-page .portfolio-hero { min-height: 650px; padding: 48px 34px 235px !important; }
+/* The summary flows under the hero copy (not pinned to the bottom), so it can
+   grow at any width without overlapping the title or the hero button. */
+.app-shell:has(.dashboard-page) .dashboard-page .portfolio-hero { min-height: 0; padding: 48px clamp(18px,4vw,42px) 27px !important; }
 .app-shell:has(.dashboard-page) .dashboard-page .dashboard-hero-layout { position: static; width: min(100%,850px); }
-.app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary { position: absolute; z-index: 3; right: clamp(22px,4vw,42px); bottom: 27px; left: clamp(22px,4vw,42px); display: flex; flex-direction: column; gap: 12px; }
+.app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary { position: relative; z-index: 3; display: flex; flex-direction: column; gap: 12px; margin-top: 40px; text-align: left; }
 .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary .dashboard-section-heading { padding: 0 2px; }
 .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary .dashboard-section-heading h3 { color: #e8edf8; font-family: Inter,ui-sans-serif,system-ui,sans-serif; font-size: 16px; font-weight: 550; }
 .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary .dashboard-section-heading > span { color: #8291aa; }
@@ -1265,8 +1267,8 @@ body { color: var(--ink); background: var(--page-paper); }
 .app-shell:has(.dashboard-page) .dashboard-page .dashboard-metrics article > div:nth-child(2) { margin-top: 10px !important; }
 .app-shell:has(.dashboard-page) .dashboard-page .dashboard-metrics article strong { font-size: 27px; }
 @media (max-width: 680px) {
-  .app-shell:has(.dashboard-page) .dashboard-page .portfolio-hero { min-height: 705px; padding: 43px 18px 275px !important; }
-  .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary { right: 15px; bottom: 18px; left: 15px; gap: 9px; }
+  .app-shell:has(.dashboard-page) .dashboard-page .portfolio-hero { padding: 36px 14px 16px !important; }
+  .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary { gap: 9px; margin-top: 30px; }
   .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary .dashboard-section-heading h3 { font-size: 14px; }
   .app-shell:has(.dashboard-page) .dashboard-page .dashboard-summary .dashboard-section-heading > span { font-size: 8px; }
   .app-shell:has(.dashboard-page) .dashboard-page .dashboard-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
@@ -1667,4 +1669,28 @@ select:focus-visible, textarea:focus-visible {
   .project-directory-content.is-mobile-open { display: block; }
   .project-directory-heading { padding: 3px 4px 8px; }
   .project-directory-nav { max-height: calc(55vh - 42px); }
+}
+
+/* Phone layout fixes (below Tailwind's sm breakpoint). Kept last so they win
+   over the desktop-first rules above. */
+@media (max-width: 639px) {
+  /* Detail header stacks vertically, so left-align it instead of pushing it right. */
+  .project-heading { align-items: stretch !important; }
+  .project-heading h1 { overflow-wrap: anywhere; }
+  .project-heading > div:last-child > button { flex: 1 1 auto; justify-content: center; }
+
+  /* Dashboard section headings. */
+  .dashboard-section-heading { flex-wrap: wrap; row-gap: 6px; }
+}
+
+/* Tables marked .responsive-table become stacked cards on phones; each cell
+   shows its column name from data-label. */
+@media (max-width: 639px) {
+  .responsive-table thead { display: none; }
+  .responsive-table, .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; }
+  .responsive-table tbody { border: 0 !important; }
+  .responsive-table tr { margin-bottom: 10px; border: 1px solid rgba(165,215,232,.12) !important; border-radius: 12px; padding: 6px 0; }
+  .responsive-table td { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px !important; text-align: right; }
+  .responsive-table td::before { flex-shrink: 0; color: rgba(165,215,232,.6); content: attr(data-label); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+  .responsive-table td > * { min-width: 0; }
 }

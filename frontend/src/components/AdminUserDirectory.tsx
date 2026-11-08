@@ -256,7 +256,7 @@ export const AdminUserDirectory: React.FC = () => {
 
       {/* Directory Table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm border-collapse">
+        <table className="responsive-table w-full text-left text-sm border-collapse">
           <thead>
             <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
               <th className="py-3 px-4">Member Name</th>
@@ -272,25 +272,27 @@ export const AdminUserDirectory: React.FC = () => {
 
               return (
                 <tr key={member.id} className="hover:bg-slate-800/30 transition">
-                  <td className="py-3.5 px-4 font-medium text-white flex items-center gap-2">
-                    <UserCheck className="w-4 h-4 text-slate-500" />
+                  <td data-label="Member" className="py-3.5 px-4 font-medium text-white">
+                    <span className="inline-flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 shrink-0 text-slate-500" />
                     <span>{member.name}</span>
                     {isSelf && (
                       <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded">
                         You
                       </span>
                     )}
+                    </span>
                   </td>
-                  <td className="py-3.5 px-4 text-slate-400 text-xs">{member.email}</td>
-                  <td className="py-3.5 px-4 text-slate-500 text-xs">
+                  <td data-label="Email" className="break-all py-3.5 px-4 text-slate-400 text-xs">{member.email}</td>
+                  <td data-label="Joined" className="py-3.5 px-4 text-slate-500 text-xs">
                     {new Date(member.createdAt).toLocaleDateString()}
                   </td>
-                  <td className="py-3.5 px-4">
+                  <td data-label="Role" className="py-3.5 px-4">
                     <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${getRoleBadge(member.role)}`}>
                       {member.role}
                     </span>
                   </td>
-                  <td className="py-3.5 px-4 text-right">
+                  <td data-label="Access" className="py-3.5 px-4 text-right">
                     {isSelf ? (
                       <span className="text-xs text-slate-600 italic">Self (Locked)</span>
                     ) : (
@@ -310,6 +312,7 @@ export const AdminUserDirectory: React.FC = () => {
                           disabled={deletingId === member.id || updatingId === member.id}
                           onClick={() => handleDeleteUser(member.id, member.name)}
                           title="Delete User"
+                          aria-label={`Delete ${member.name}`}
                           className="p-1.5 bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/30 rounded-xl transition disabled:opacity-50"
                         >
                           <Trash2 className="w-4 h-4" />

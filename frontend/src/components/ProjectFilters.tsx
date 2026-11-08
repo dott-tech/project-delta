@@ -83,7 +83,7 @@ export const ProjectFilters: React.FC<ProjectFiltersProps> = ({
           type="button"
           onClick={onReset}
           disabled={!hasActiveFilters}
-          className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:hover:bg-slate-800 text-xs px-3 py-2 rounded-xl transition font-medium"
+          className={`${hasActiveFilters ? 'flex' : 'hidden lg:flex'} items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:hover:bg-slate-800 text-xs px-3 py-2 rounded-xl transition font-medium`}
         >
           <RotateCcw className="w-3.5 h-3.5" /> Clear Filters
         </button>

@@ -289,16 +289,16 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                     <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-400/40 to-transparent opacity-0 transition group-hover:opacity-100" />
                     <div className="space-y-3">
                       {/* Top Badges & Action Buttons */}
-                      <div className="flex justify-between items-start">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-semibold px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="whitespace-nowrap text-[10px] font-semibold px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
                             {project.projectType}
                           </span>
-                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${projectStatus.style}`}>{projectStatus.label}</span>
+                          <span className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-medium ${projectStatus.style}`}>{projectStatus.label}</span>
                           {hasSubProjects && (
                             <button
                               onClick={(e) => toggleExpand(e, project.id)}
-                              className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white transition flex items-center gap-1 text-[10px]"
+                              className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white transition flex items-center gap-1 whitespace-nowrap text-[10px]"
                             >
                               {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                               <span>{project.subProjects!.length} packages</span>
@@ -306,7 +306,7 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
+                        <div className="flex shrink-0 items-center gap-1 opacity-80 group-hover:opacity-100 transition">
                           {canCreate && (
                             <button
                               title="Edit Project"
@@ -559,14 +559,14 @@ const PortfolioMetric: React.FC<PortfolioMetricProps> = ({ icon, label, value, d
   return (
     <article className="min-w-0 rounded-2xl border border-slate-700/70 bg-slate-950/55 p-3.5 backdrop-blur-sm sm:p-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-[11px] font-medium text-slate-400 sm:text-xs">{label}</span>
+        <span className="min-w-0 text-[11px] font-medium leading-snug text-slate-400 sm:text-xs">{label}</span>
         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${tones[tone]}`}>{icon}</span>
       </div>
       <div className="mt-3 flex items-end justify-between gap-2">
         <strong className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{value}</strong>
         {progress !== undefined && <span className="pb-1 text-[10px] font-semibold text-lime-300">portfolio</span>}
       </div>
-      <p className="mt-1 truncate text-[10px] text-slate-500 sm:text-[11px]">{detail}</p>
+      <p className="mt-1 text-[10px] leading-snug text-slate-500 sm:text-[11px]">{detail}</p>
       {progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-lime-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
     </article>
   );
