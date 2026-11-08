@@ -15,10 +15,16 @@ enum Role {
 
 // Project Level Roles
 enum ProjectRole {
-  ADMIN
   MANAGER
   EDITOR
   VIEWER
+}
+
+enum FileReviewStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
 }
 
 enum PhaseStatus {
@@ -36,34 +42,54 @@ enum FileType {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String
-  password  String
-  role      Role     @default(TEAM_MEMBER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  email       String   @unique
+  name        String
+  password    String
+  role        Role     @default(TEAM_MEMBER)
+  authVersion Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relationships
-  projectMemberships ProjectMember[]
-  createdProjects    Project[]       @relation("CreatedProjects")
-  updatedProjects    Project[]       @relation("UpdatedProjects")
-  projectActivities  ProjectActivity[]
+  projectMemberships   ProjectMember[]
+  createdProjects      Project[]         @relation("CreatedProjects")
+  updatedProjects      Project[]         @relation("UpdatedProjects")
+  projectActivities    ProjectActivity[]
+  sentInvitations      Invitation[]      @relation("InvitationCreator")
+  uploadedProjectFiles ProjectFile[]     @relation("ProjectFileUploader")
+  reviewedProjectFiles ProjectFile[]     @relation("ProjectFileReviewer")
+}
+
+model Invitation {
+  id          String    @id @default(uuid())
+  email       String
+  role        Role      @default(CLIENT)
+  tokenHash   String    @unique @db.VarChar(64)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  createdById String
+  createdBy   User      @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([email, acceptedAt, revokedAt])
+  @@index([expiresAt])
 }
 
 model Project {
-  id              String   @id @default(uuid())
-  title           String
-  description     String?
-  projectType     String   // e.g. "Industrial Master Plan", "Logistics Park"
-  location        String
-  isArchived      Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  projectType String // e.g. "Industrial Master Plan", "Logistics Park"
+  location    String
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Facility / Building Package Specifics
-  buildingCode    String?  @unique(map: "Project_buildingCode_key") // Globally unique structure code
-  facilityType    String?  // e.g. "Warehouse", "Substation", "Office", "Utilities"
+  buildingCode String? @unique(map: "Project_buildingCode_key") // Globally unique structure code, e.g. "WH-01"
+  facilityType String? // e.g. "Warehouse", "Substation", "Office", "Utilities"
 
   // Master Project -> Building Package Self-Relation
   parentProjectId String?
@@ -72,9 +98,9 @@ model Project {
 
   // Audit Relations
   createdByUserId String
-  createdBy       User     @relation("CreatedProjects", fields: [createdByUserId], references: [id])
+  createdBy       User    @relation("CreatedProjects", fields: [createdByUserId], references: [id])
   updatedByUserId String?
-  updatedBy       User?    @relation("UpdatedProjects", fields: [updatedByUserId], references: [id])
+  updatedBy       User?   @relation("UpdatedProjects", fields: [updatedByUserId], references: [id])
 
   // Independent Entities Per Building Package
   phases       ProjectPhase[]
@@ -130,16 +156,24 @@ model ProjectMember {
 }
 
 model ProjectFile {
-  id           String        @id @default(uuid())
-  projectId    String
-  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  fileName     String
-  fileUrl      String
-  fileType     FileType      @default(OTHER)
-  fileSize     Int?
-  allowedRoles ProjectRole[] @default([ADMIN])
-  createdAt    DateTime      @default(now())
+  id               String           @id @default(uuid())
+  projectId        String
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName         String
+  fileUrl          String
+  fileType         FileType         @default(OTHER)
+  fileSize         Int?
+  allowedRoles     ProjectRole[]    @default([MANAGER])
+  reviewStatus     FileReviewStatus @default(DRAFT)
+  uploadedByUserId String?
+  uploadedBy       User?            @relation("ProjectFileUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  reviewedByUserId String?
+  reviewedBy       User?            @relation("ProjectFileReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
+  reviewComment    String?
+  createdAt        DateTime         @default(now())
 
+  @@index([projectId, reviewStatus, createdAt])
   @@index([projectId])
 }
 
