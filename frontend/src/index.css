@@ -1593,9 +1593,6 @@ select:focus-visible, textarea:focus-visible {
 
 .studio-projects-group { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 3px; }
 .studio-project-directory { min-width: 0; margin: 2px 0 5px; padding-left: 8px; }
-.project-directory-heading { display: flex; align-items: center; gap: 7px; padding: 4px 4px 7px; color: rgba(232,243,247,.45); font-size: 8px; font-weight: 750; letter-spacing: .14em; }
-.project-directory-heading > svg { width: 12px; height: 12px; color: var(--hub-ice); }
-.project-directory-mobile-toggle { display: none; }
 .project-directory-content { display: block; }
 .project-directory-nav { max-height: min(48vh, 460px); overflow: auto; padding: 0 2px 2px 0; }
 .project-directory-status { margin: 8px 4px 2px; color: rgba(232,243,247,.55); font-size: 10px; line-height: 1.5; }
@@ -1645,30 +1642,27 @@ select:focus-visible, textarea:focus-visible {
 .project-ancestor-separator { color: rgba(165,215,232,.45); font-size: 15px; }
 .studio-nav .project-directory-root-toggle > svg:last-child { width: 14px; height: 14px; margin-left: auto; color: rgba(165,215,232,.65); }
 
+/* The backdrop only exists for the phone dropdown below. */
+.project-tree-backdrop { display: none; }
+
+/* Phones: the project tree drops down below the header as its own floating
+   list instead of growing the nav bar. Both pieces are positioned against the
+   sticky header (its backdrop-filter would also trap position: fixed). */
 @media (max-width: 680px) {
-  .studio-projects-group { position: relative; flex: 1; }
-  .studio-project-directory.is-projects-root { position: static; margin: 2px 0 5px; padding-left: 8px; }
-  .studio-project-directory.is-projects-root .project-directory-content.is-projects-root-content {
-    position: static;
-    display: block;
-    width: auto;
-    max-height: none;
-    overflow: visible;
-    border: 0;
-    border-radius: 0;
-    padding: 0;
-    background: transparent;
-    box-shadow: none;
+  .studio-projects-group { position: static; flex: 1; }
+  .project-tree-backdrop {
+    position: absolute; z-index: 119; top: 100%; right: 0; left: 0; display: block;
+    height: 100vh; border: 0; padding: 0; background: rgba(2,6,23,.55); cursor: default;
   }
-  .studio-project-directory.is-projects-root .project-directory-nav { max-height: min(48vh, 460px); }
-  .studio-project-directory { position: relative; margin: 0; padding: 0; }
-  .project-directory-mobile-toggle { display: flex; width: 100%; min-height: 27px; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(165,215,232,.15) !important; border-radius: 8px !important; padding: 4px 6px !important; color: rgba(232,243,247,.7) !important; background: rgba(255,255,255,.035) !important; font-size: 9px; }
-  .project-directory-mobile-toggle > svg { width: 12px; height: 12px; color: var(--hub-ice); }
-  .project-directory-mobile-toggle > svg:last-child { width: 10px; height: 10px; }
-  .project-directory-content { position: absolute; z-index: 120; top: calc(100% + 7px); left: 0; display: none; width: min(340px, calc(100vw - 30px)); max-height: 55vh; overflow: hidden; border: 1px solid var(--hub-surface-hover); border-radius: 12px; padding: 10px; background: #061326; box-shadow: 0 18px 45px rgba(0,0,0,.45); }
-  .project-directory-content.is-mobile-open { display: block; }
-  .project-directory-heading { padding: 3px 4px 8px; }
-  .project-directory-nav { max-height: calc(55vh - 42px); }
+  .project-tree-panel {
+    position: absolute; z-index: 120; top: calc(100% + 8px); right: 12px; left: 12px;
+    border: 1px solid rgba(165,215,232,.18); border-radius: 14px; padding: 8px;
+    background: #061326; box-shadow: 0 18px 45px rgba(0,0,0,.5);
+  }
+  .project-tree-panel .studio-project-directory { margin: 0; padding: 0; }
+  .project-tree-panel .project-directory-nav { max-height: min(60vh, 480px); }
+  .project-tree-panel .project-directory-name { font-size: 13px; }
+  .project-tree-panel .project-directory-row { min-height: 42px; }
 }
 
 /* Phone layout fixes (below Tailwind's sm breakpoint). Kept last so they win

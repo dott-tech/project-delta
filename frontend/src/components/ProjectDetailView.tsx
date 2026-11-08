@@ -891,10 +891,9 @@ export const ProjectDetailView: React.FC<Props> = ({
                             onClick={() => handleDownloadFile(file)}
                             aria-label={`Download ${file.fileName}`}
                             title="Download file"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-400 transition hover:border-slate-600 hover:text-white"
+                            className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-600 text-slate-400 hover:text-white rounded-lg transition"
                           >
                             <Download className="h-3.5 w-3.5" />
-                            <span>Download</span>
                           </button>
                         )}
                         {canManage && (

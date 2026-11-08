@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/useAuth';
 import { ProjectDirectory } from './ProjectDirectory';
 import {
@@ -14,6 +14,10 @@ import {
 
 export type NavView = 'projects' | 'admin' | 'archive' | 'project-detail';
 
+// Matches the CSS breakpoint where the project tree becomes a dropdown panel.
+const PHONE_NAV_QUERY = '(max-width: 680px)';
+const isPhoneNav = () => window.matchMedia(PHONE_NAV_QUERY).matches;
+
 interface NavbarProps {
   currentView: NavView;
   onNavigate: (view: 'projects' | 'admin' | 'archive') => void;
@@ -25,6 +29,23 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, project
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
   const [projectsExpanded, setProjectsExpanded] = useState(false);
+
+  // Escape closes the project tree.
+  useEffect(() => {
+    if (!projectsExpanded) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProjectsExpanded(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [projectsExpanded]);
+
+  // On phones the tree is a dropdown, so close it once a project is picked.
+  // The desktop sidebar keeps it open.
+  const handleNavigateProject = (id: string, ancestorIds: string[]) => {
+    if (isPhoneNav()) setProjectsExpanded(false);
+    onNavigateProject(id, ancestorIds);
+  };
 
   return (
     <header className="studio-header">
@@ -51,9 +72,19 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, project
               {projectsExpanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
             </button>
             {projectsExpanded && (
-              <div id="project-directory-tree">
-                <ProjectDirectory activeProjectId={projectId} onNavigate={onNavigateProject} embeddedInSidebar />
-              </div>
+              <>
+                {/* Phone only (hidden by CSS on larger screens): tap outside to close. */}
+                <button
+                  type="button"
+                  className="project-tree-backdrop"
+                  aria-label="Close project list"
+                  tabIndex={-1}
+                  onClick={() => setProjectsExpanded(false)}
+                />
+                <div id="project-directory-tree" className="project-tree-panel">
+                  <ProjectDirectory activeProjectId={projectId} onNavigate={handleNavigateProject} />
+                </div>
+              </>
             )}
           </div>
           {isAdmin && <>

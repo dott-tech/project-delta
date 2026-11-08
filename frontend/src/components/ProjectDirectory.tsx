@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderTree } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import type { ProjectNavigationNode } from '../types/project';
 
 interface Props {
   activeProjectId: string | null;
   onNavigate: (projectId: string, ancestorIds: string[]) => void;
-  embeddedInSidebar?: boolean;
 }
 
 interface TreeItemProps {
@@ -90,11 +89,10 @@ const TreeItem: React.FC<TreeItemProps> = ({
   );
 };
 
-export const ProjectDirectory: React.FC<Props> = ({ activeProjectId, onNavigate, embeddedInSidebar = false }) => {
+export const ProjectDirectory: React.FC<Props> = ({ activeProjectId, onNavigate }) => {
   const [projects, setProjects] = useState<ProjectNavigationNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,32 +122,9 @@ export const ProjectDirectory: React.FC<Props> = ({ activeProjectId, onNavigate,
     };
   }, [activeProjectId]);
 
-  const handleNavigate = (projectId: string, ancestorIds: string[]) => {
-    setMobileOpen(false);
-    onNavigate(projectId, ancestorIds);
-  };
-
   return (
-    <div className={`studio-project-directory ${embeddedInSidebar ? 'is-projects-root' : ''}`}>
-      {!embeddedInSidebar && (
-        <button
-          type="button"
-          className="project-directory-mobile-toggle"
-          onClick={() => setMobileOpen((value) => !value)}
-          aria-expanded={mobileOpen}
-        >
-          <FolderTree aria-hidden="true" />
-          <span>Directory</span>
-          <ChevronDown aria-hidden="true" />
-        </button>
-      )}
-      <div className={`project-directory-content ${embeddedInSidebar ? 'is-projects-root-content' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
-        {!embeddedInSidebar && (
-          <div className="project-directory-heading">
-            <FolderTree aria-hidden="true" />
-            <span>PROJECT DIRECTORY</span>
-          </div>
-        )}
+    <div className="studio-project-directory">
+      <div className="project-directory-content">
         <nav className="project-directory-nav" aria-label="Project directory">
           {loading && projects.length === 0 ? (
             <p className="project-directory-status">Loading project list…</p>
@@ -163,7 +138,7 @@ export const ProjectDirectory: React.FC<Props> = ({ activeProjectId, onNavigate,
                   item={item}
                   activeProjectId={activeProjectId || ''}
                   ancestors={[]}
-                  onNavigate={handleNavigate}
+                  onNavigate={onNavigate}
                   defaultExpanded={activeProjectId ? nodeContains(item, activeProjectId) : false}
                 />
               ))}
