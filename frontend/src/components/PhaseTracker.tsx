@@ -27,7 +27,7 @@ export const PhaseTracker: React.FC<Props> = ({ phases, progressOverride, canEdi
       {/* Segmented Progress Bar */}
       <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden flex">
         <div
-          className="bg-blue-500 h-full transition-all duration-300"
+          className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-violet-400 transition-all duration-300"
           style={{ width: `${overallPercent}%` }}
         />
       </div>

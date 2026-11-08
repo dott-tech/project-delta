@@ -62,7 +62,7 @@ export const ArchivedProjectsList: React.FC<Props> = ({ onSelectProject }) => {
   if (loading) {
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-sm flex items-center justify-center gap-2">
-        <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+        <RefreshCw className="w-4 h-4 animate-spin text-blue-300" />
         Loading archived projects...
       </div>
     );
@@ -83,7 +83,7 @@ export const ArchivedProjectsList: React.FC<Props> = ({ onSelectProject }) => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <Archive className="w-5 h-5 text-amber-400" /> Archived Projects
+            <Archive className="w-5 h-5 text-blue-300" /> Archived Projects
           </h3>
           <p className="text-xs text-slate-400 mt-1">
             Review inactive project files, view their read-only workbench, or restore them to the active workspace.

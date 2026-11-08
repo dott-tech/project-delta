@@ -36,7 +36,7 @@ export const ProjectActivityLog: React.FC<{ projectId: string; refreshKey?: numb
     <section className="activity-panel rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-xl">
       <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
         <div>
-          <h3 className="flex items-center gap-2 text-base font-semibold text-white"><Activity className="h-4 w-4 text-amber-400" /> Project Activity</h3>
+          <h3 className="flex items-center gap-2 text-base font-semibold text-white"><Activity className="h-4 w-4 text-blue-300" /> Project Activity</h3>
           <p className="mt-1 text-xs text-slate-400">Edits, uploads, access changes, and project events</p>
         </div>
         <button onClick={refreshActivities} aria-label="Refresh project activity" className="rounded-lg border border-slate-700 p-2 text-slate-400 hover:text-white">

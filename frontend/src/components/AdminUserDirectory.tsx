@@ -131,7 +131,7 @@ export const AdminUserDirectory: React.FC = () => {
   const getRoleBadge = (role: string) => {
     switch (role) {
       case 'ADMIN':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+        return 'bg-blue-400/10 text-blue-300 border-blue-400/20';
       case 'TEAM_MEMBER':
         return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
       default:

@@ -323,7 +323,7 @@ export const ProjectsDashboard: React.FC<{ onSelectProject: (id: string) => void
                             <button
                               title="Archive Project"
                               onClick={(e) => handleArchiveProject(e, project.id)}
-                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded-lg transition"
+                              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-blue-300 rounded-lg transition"
                             >
                               <Archive className="w-3.5 h-3.5" />
                             </button>
@@ -551,10 +551,10 @@ type PortfolioMetricProps = {
 
 const PortfolioMetric: React.FC<PortfolioMetricProps> = ({ icon, label, value, detail, tone, progress }) => {
   const tones = {
-    blue: 'border-lime-400/20 bg-lime-400/10 text-lime-300',
-    violet: 'border-lime-400/20 bg-lime-400/10 text-lime-300',
+    blue: 'border-cyan-400/25 bg-cyan-400/10 text-cyan-300',
+    violet: 'border-cyan-400/25 bg-cyan-400/10 text-cyan-300',
     rose: 'border-rose-400/20 bg-rose-400/10 text-rose-300',
-    emerald: 'border-lime-400/20 bg-lime-400/10 text-lime-300',
+    emerald: 'border-cyan-400/25 bg-cyan-400/10 text-cyan-300',
   };
   return (
     <article className="min-w-0 rounded-2xl border border-slate-700/70 bg-slate-950/55 p-3.5 backdrop-blur-sm sm:p-4">
@@ -564,10 +564,10 @@ const PortfolioMetric: React.FC<PortfolioMetricProps> = ({ icon, label, value, d
       </div>
       <div className="mt-3 flex items-end justify-between gap-2">
         <strong className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{value}</strong>
-        {progress !== undefined && <span className="pb-1 text-[10px] font-semibold text-lime-300">portfolio</span>}
+        {progress !== undefined && <span className="pb-1 text-[10px] font-semibold text-violet-300">portfolio</span>}
       </div>
       <p className="mt-1 text-[10px] leading-snug text-slate-500 sm:text-[11px]">{detail}</p>
-      {progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-lime-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
+      {progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-violet-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
     </article>
   );
 };

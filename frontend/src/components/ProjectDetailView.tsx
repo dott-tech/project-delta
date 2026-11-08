@@ -761,7 +761,7 @@ export const ProjectDetailView: React.FC<Props> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
               <div>
                 <h3 className="font-semibold text-white text-base flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-amber-400" /> Site Assets & CAD Documents
+                  <Shield className="w-4 h-4 text-blue-300" /> Site Assets & CAD Documents
                 </h3>
                 <p className="text-xs text-slate-400">Master site plans, environmental assessments, and permits</p>
               </div>
@@ -830,7 +830,7 @@ export const ProjectDetailView: React.FC<Props> = ({
                               {allowedRolesList.map((role) => (
                                 <span
                                   key={role}
-                                  className="text-[9px] px-1.5 py-0.2 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-mono font-bold"
+                                  className="text-[9px] px-1.5 py-0.2 bg-blue-400/10 text-blue-300 border border-blue-400/20 rounded font-mono font-bold"
                                 >
                                   {role}
                                 </span>
@@ -1162,7 +1162,7 @@ export const ProjectDetailView: React.FC<Props> = ({
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Shield className="w-4 h-4 text-amber-400" />
+              <Shield className="w-4 h-4 text-blue-300" />
               Asset Visibility: {editingFile.name}
             </h3>
             <p className="text-xs text-slate-400">
@@ -1273,7 +1273,7 @@ export const ProjectDetailView: React.FC<Props> = ({
                     {editingMember.name}
                   </div>
                 ) : usersList.length === 0 ? (
-                  <p className="text-xs text-amber-400">No available users found.</p>
+                  <p className="text-xs text-blue-300">No available users found.</p>
                 ) : (
                   <select
                     value={memberUserId}
